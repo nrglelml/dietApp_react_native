@@ -5,6 +5,7 @@ import HomeClient from "./Client/HomeClient";
 import HomeDyt from "./Dietitian/HomeDyt";
 import VerifyOTP from "./SignUpPage/VerifyOTP";
 import UpdatePassword from "./LoginPage/UpdatePassword";
+import ApprovalScreen from "./Client/ApprovalScreen";
 export {
   WelcomeScreen,
   SignUpScreen,
@@ -13,4 +14,5 @@ export {
   HomeDyt,
   VerifyOTP,
   UpdatePassword,
+  ApprovalScreen,
 };

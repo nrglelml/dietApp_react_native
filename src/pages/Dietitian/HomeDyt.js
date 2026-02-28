@@ -8,10 +8,14 @@ import {
   TouchableOpacity,
   StatusBar,
   Platform,
+  Modal,
+  Alert,
+  TextInput,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { supabase } from "../../../supabase";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { useNavigation } from "@react-navigation/native";
 
 const HomeDyt = () => {
   const [logs, setLogs] = useState([]);
@@ -23,6 +27,22 @@ const HomeDyt = () => {
     compliance: 0,
     compTrend: 0,
   });
+  const [modalVisible, setModalVisible] = useState(false);
+  const [clientEmail, setClientEmail] = useState("");
+
+  const navigation = useNavigation();
+  const handleLogout = async () => {
+    console.log("Çıkış işlemi başlatıldı...");
+    const { error } = await supabase.auth.signOut();
+    if (error) {
+      console.error("Çıkış hatası:", error.message);
+    } else {
+      navigation.reset({
+        index: 0,
+        routes: [{ name: "Welcome" }],
+      });
+    }
+  };
 
   useEffect(() => {
     fetchUserAndData();
@@ -43,21 +63,20 @@ const HomeDyt = () => {
 
         if (profile) setDietitianName(profile.full_name);
 
-        const { data, error: rpcError } = await supabase.rpc(
+        const { data: statData, error: rpcError } = await supabase.rpc(
           "get_dietitian_stats_v2",
           { dietitian_uuid: user.id },
         );
 
-        if (!rpcError && data?.length > 0) {
+        if (!rpcError && statData?.length > 0) {
           setStats({
-            totalClients: data[0].total_clients,
-            clientTrend: data[0].client_trend,
-            compliance: data[0].avg_compliance,
-            compTrend: data[0].compliance_trend,
+            totalClients: statData[0].total_clients,
+            clientTrend: statData[0].client_trend,
+            compliance: statData[0].avg_compliance,
+            compTrend: statData[0].compliance_trend,
           });
         }
       }
-
       await fetchMealLogs();
     } catch (error) {
       console.error("Yükleme hatası:", error.message);
@@ -72,15 +91,71 @@ const HomeDyt = () => {
       .select(
         `
         id, photo_url, mood, created_at,
-        meal_plans!inner(
+        meal_plans!inner (
           meal_type,
-          client_profiles(full_name)
+          client_profiles (full_name, weight)
         )
       `,
       )
       .order("created_at", { ascending: false });
 
     if (!error) setLogs(data);
+  };
+
+  const addClient = async () => {
+    if (!clientEmail) {
+      Alert.alert("Hata", "Lütfen bir e-posta adresi girin.");
+      return;
+    }
+
+    try {
+      setLoading(true);
+
+      const { data: userData, error: userError } = await supabase
+        .from("client_profiles")
+        .select("id, full_name")
+        .eq("email", clientEmail.toLowerCase())
+        .single();
+
+      if (userError || !userData) {
+        Alert.alert("Hata", "Bu e-postaya sahip bir danışan bulunamadı.");
+        return;
+      }
+
+      if (!dietitianName) {
+        Alert.alert("Hata", "Diyetisyen bilgileri henüz yüklenmedi.");
+        return;
+      }
+
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      const approvalUrl = `https://idyllic-cassata-8758dd.netlify.app/?dietitianId=${user.id}&dietitianName=${encodeURIComponent(dietitianName)}&targetEmail=${encodeURIComponent(clientEmail.toLowerCase())}`;
+
+      const { data, error: funcError } = await supabase.functions.invoke(
+        "send-invite-email",
+        {
+          body: {
+            clientEmail: clientEmail.toLowerCase(),
+            clientName: userData.full_name,
+            dietitianName: dietitianName,
+            approvalUrl: approvalUrl,
+          },
+        },
+      );
+
+      if (funcError) throw funcError;
+
+      Alert.alert("Başarılı", "Davet e-postası sistem tarafından gönderildi!");
+      setModalVisible(false);
+      setClientEmail("");
+    } catch (error) {
+      console.error("Hata:", error);
+      Alert.alert("Hata", "E-posta gönderimi sırasında bir sorun oluştu.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   const getTrendStyle = (value) => ({
@@ -100,24 +175,28 @@ const HomeDyt = () => {
               { backgroundColor: item.mood === "Kötü" ? "#FF3B30" : "#34C759" },
             ]}
           >
-            <Text style={styles.avatarText}>{fullName.charAt(0)}</Text>
+            <Text style={styles.avatarText}>{full_name.charAt(0)}</Text>
           </View>
           <View style={styles.textContainer}>
-            <Text style={styles.clientName}>{fullName}</Text>
+            <Text style={styles.clientName}>{item.full_name}</Text>
             <View style={styles.statusRow}>
+              <Text style={styles.clientWeightText}>{item.weight} kg •</Text>
               <Text
                 style={[
-                  styles.statusTag,
-                  { color: item.mood === "Kötü" ? "#FF3B30" : "#34C759" },
+                  styles.complianceText,
+                  { color: item.compliance_rate < 50 ? "#FF3B30" : "#34C759" },
                 ]}
               >
-                • {item.meal_plans?.meal_type}
+                {" "}
+                %{item.compliance_rate || 0} Uyum
               </Text>
-              <Text style={styles.moodBadge}>{item.mood || "Stabil"}</Text>
             </View>
           </View>
         </View>
-        <Ionicons name="chevron-forward" size={16} color="#C7C7CC" />
+        <View style={{ alignItems: "flex-end" }}>
+          <Ionicons name="chevron-forward" size={16} color="#C7C7CC" />
+          <Text style={styles.lastUpdateText}>Dün</Text>
+        </View>
       </TouchableOpacity>
     );
   };
@@ -146,7 +225,10 @@ const HomeDyt = () => {
               </Text>
             </View>
           </View>
-        
+          <TouchableOpacity style={styles.notificationBtn}>
+            <Ionicons name="notifications-outline" size={24} color="#1C1C1E" />
+            <View style={styles.badge} />
+          </TouchableOpacity>
         </View>
 
         <View style={styles.statsContainer}>
@@ -204,7 +286,7 @@ const HomeDyt = () => {
             </View>
           </View>
         </View>
-
+ 
         <View style={styles.listHeader}>
           <Text style={styles.sectionTitle}>Aktif Danışanlar</Text>
           <Text style={styles.filterText}>Tümünü Gör</Text>
@@ -221,7 +303,15 @@ const HomeDyt = () => {
           <Text style={styles.emptyText}>Henüz bir aktivite bulunmuyor.</Text>
         }
       />
+  {/* ÇIKIŞ YAP */}
+      <View style={styles.container}>
+        <Text style={styles.text}>Ana Sayfa </Text>
 
+        <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
+          <Text style={styles.buttonText}>Çıkış Yap</Text>
+        </TouchableOpacity>
+      </View>
+      {/* ÇIKIŞ YAP */}
       <View style={styles.tabBar}>
         <TouchableOpacity style={styles.tabItem}>
           <Ionicons name="people" size={24} color="#34C759" />
@@ -231,7 +321,10 @@ const HomeDyt = () => {
           <Ionicons name="book-outline" size={24} color="#8E8E93" />
           <Text style={styles.tabText}>Tarifler</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.tabItem}>
+        <TouchableOpacity
+          style={styles.tabItem}
+          onPress={() => setModalVisible(true)}
+        >
           <View style={styles.fabButton}>
             <Ionicons name="add" size={32} color="#FFF" />
           </View>
@@ -245,11 +338,110 @@ const HomeDyt = () => {
           <Text style={styles.tabText}>Ayarlar</Text>
         </TouchableOpacity>
       </View>
+      <Modal
+        animationType="slide"
+        transparent={true}
+        visible={modalVisible}
+        onRequestClose={() => setModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>Yeni Danışan Ekle</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Danışan E-posta Adresi"
+              value={clientEmail}
+              onChangeText={setClientEmail}
+              autoCapitalize="none"
+              keyboardType="email-address"
+            />
+            <View style={styles.modalButtons}>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.cancelButton]}
+                onPress={() => setModalVisible(false)}
+              >
+                <Text style={styles.cancelButtonText}>Vazgeç</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.confirmButton]}
+                onPress={addClient}
+              >
+                <Text style={styles.confirmButtonText}>Ekle</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 };
 
 const styles = StyleSheet.create({
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  modalContent: {
+    width: "85%",
+    backgroundColor: "#FFF",
+    borderRadius: 25,
+    padding: 25,
+    alignItems: "center",
+    elevation: 5,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: "700",
+    marginBottom: 20,
+    color: "#1C1C1E",
+  },
+  input: {
+    width: "100%",
+    height: 50,
+    backgroundColor: "#F2F2F7",
+    borderRadius: 12,
+    paddingHorizontal: 15,
+    marginBottom: 20,
+  },
+  modalButtons: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    width: "100%",
+  },
+  modalButton: {
+    flex: 1,
+    height: 45,
+    borderRadius: 12,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  confirmButton: { backgroundColor: "#34C759", marginLeft: 10 },
+  cancelButton: { backgroundColor: "#F2F2F7" },
+  confirmButtonText: { color: "#FFF", fontWeight: "600" },
+  cancelButtonText: { color: "#8E8E93", fontWeight: "600" },
+  notificationBtn: {
+    padding: 8,
+    backgroundColor: "#F2F2F7",
+    borderRadius: 12,
+    position: "relative",
+  },
+  badge: {
+    position: "absolute",
+    top: 8,
+    right: 10,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: "#FF3B30",
+    borderWidth: 2,
+    borderColor: "#FFF",
+  },
+  clientWeightText: { fontSize: 13, color: "#8E8E93" },
+  complianceText: { fontSize: 13, fontWeight: "700" },
+  lastUpdateText: { fontSize: 10, color: "#C7C7CC", marginTop: 4 },
+  emptyContainer: { alignItems: "center", marginTop: 50 },
   safeArea: {
     flex: 1,
     backgroundColor: "#FFFFFF",

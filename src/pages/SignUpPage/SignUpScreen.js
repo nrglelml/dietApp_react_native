@@ -13,6 +13,7 @@ import { schedule, balancedDiet } from "../../assets/icons";
 import styles from "./styles";
 import { useNavigation } from "@react-navigation/native";
 import { supabase } from "../../../supabase";
+import { eye } from "../../assets/icons";
 
 const SignUpScreen = () => {
   const [selectedRole, setSelectedRole] = useState("client");
@@ -22,6 +23,9 @@ const SignUpScreen = () => {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState({ text: "", type: "" });
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+
   const navigation = useNavigation();
   const showMessage = (text, type) => {
     setMessage({ text, type });
@@ -150,23 +154,53 @@ const SignUpScreen = () => {
 
         <View style={styles.inputContainer}>
           <Text style={styles.label}>Şifre</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="🔒 ........"
-            secureTextEntry
-            value={password}
-            onChangeText={setPassword}
-          />
+          <View style={{ justifyContent: "center" }}>
+            <TextInput
+              style={styles.input}
+              placeholder="🔒 ........"
+              secureTextEntry={!showPassword}
+              value={password}
+              onChangeText={setPassword}
+            />
+            <TouchableOpacity
+              style={{ position: "absolute", right: 15 }}
+              onPress={() => setShowPassword(!showPassword)}
+            >
+              <Image
+                source={eye}
+                style={{
+                  width: 24,
+                  height: 24,
+                  tintColor: showPassword ? "#22c55e" : "#94a3b8",
+                }}
+              />
+            </TouchableOpacity>
+          </View>
         </View>
         <View style={styles.inputContainer}>
           <Text style={styles.label}>Şifre Tekrar</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="🔒 Şifrenizi tekrar girin"
-            secureTextEntry
-            value={confirmPassword}
-            onChangeText={setConfirmPassword}
-          />
+          <View style={{ justifyContent: "center" }}>
+            <TextInput
+              style={styles.input}
+              placeholder="🔒 Şifrenizi tekrar girin"
+              secureTextEntry={!showConfirmPassword}
+              value={confirmPassword}
+              onChangeText={setConfirmPassword}
+            />
+            <TouchableOpacity
+              style={{ position: "absolute", right: 15 }}
+              onPress={() => setShowConfirmPassword(!showConfirmPassword)}
+            >
+              <Image
+                source={eye}
+                style={{
+                  width: 24,
+                  height: 24,
+                  tintColor: showConfirmPassword ? "#22c55e" : "#94a3b8",
+                }}
+              />
+            </TouchableOpacity>
+          </View>
         </View>
         {message.text ? (
           <View

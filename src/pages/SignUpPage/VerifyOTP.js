@@ -10,7 +10,7 @@ import { supabase } from "../../../supabase";
 import styles from "./styles";
 import { useNavigation } from "@react-navigation/native";
 
-const VerifyOTPScreen = ({ route}) => {
+const VerifyOTPScreen = ({ route }) => {
   const { email, role, fullName } = route.params;
   const [token, setToken] = useState("");
   const navigation = useNavigation();
@@ -45,12 +45,12 @@ const VerifyOTPScreen = ({ route}) => {
         if (role === "client") {
           const { error } = await supabase
             .from("client_profiles")
-            .insert([{ id: data.user.id, full_name: fullName }]);
+            .insert([{ id: data.user.id, full_name: fullName, email: email }]);
           subProfileError = error;
         } else if (role === "dietitian") {
           const { error } = await supabase
             .from("dietitian_profiles")
-            .insert([{ id: data.user.id, full_name: fullName }]);
+            .insert([{ id: data.user.id, full_name: fullName, email: email }]);
           subProfileError = error;
         }
 

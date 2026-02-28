@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import {
   Text,
   View,
@@ -13,14 +13,19 @@ import { schedule, balancedDiet } from "../../assets/icons";
 import styles from "./styles";
 import { useNavigation } from "@react-navigation/native";
 import { supabase } from "../../../supabase";
+import { eye } from "../../assets/icons";
 
-const LoginScreen = () => {
+const LoginScreen = ({ route }) => {
   const [selectedRole, setSelectedRole] = useState("client");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState({ text: "", type: "" });
   const navigation = useNavigation();
+  const [showPassword, setShowPassword] = useState(false);
+
+  const { redirectTo, redirectParams } = route?.params || {};
+
   const showMessage = (text, type) => {
     setMessage({ text, type });
     setTimeout(() => setMessage({ text: "", type: "" }), 5000);
@@ -62,13 +67,23 @@ const LoginScreen = () => {
         }
 
         showMessage("Giriş başarılı! Yönlendiriliyorsunuz...", "success");
+
         setTimeout(() => {
-          navigation.reset({
-            index: 0,
-            routes: [
-              { name: selectedRole === "dietitian" ? "HomeDyt" : "HomeClient" },
-            ],
-          });
+          if (redirectTo) {
+            navigation.reset({
+              index: 0,
+              routes: [{ name: redirectTo, params: redirectParams }],
+            });
+          } else {
+            navigation.reset({
+              index: 0,
+              routes: [
+                {
+                  name: profile.role === "dietitian" ? "HomeDyt" : "HomeClient",
+                },
+              ],
+            });
+          }
         }, 1500);
       }
     } catch (error) {
@@ -81,6 +96,7 @@ const LoginScreen = () => {
       setLoading(false);
     }
   };
+
   const handleForgotPassword = async () => {
     if (!email) {
       showMessage(
@@ -105,6 +121,7 @@ const LoginScreen = () => {
       showMessage("Hata: " + error.message, "error");
     }
   };
+
   return (
     <KeyboardAvoidingView
       style={{ flex: 1 }}
@@ -174,13 +191,28 @@ const LoginScreen = () => {
 
         <View style={styles.inputContainer}>
           <Text style={styles.label}>Şifre</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="🔒 ........"
-            secureTextEntry
-            value={password}
-            onChangeText={setPassword}
-          />
+          <View style={{ justifyContent: "center" }}>
+            <TextInput
+              style={styles.input}
+              placeholder="🔒 ........"
+              secureTextEntry={!showPassword}
+              value={password}
+              onChangeText={setPassword}
+            />
+            <TouchableOpacity
+              style={{ position: "absolute", right: 15 }}
+              onPress={() => setShowPassword(!showPassword)}
+            >
+              <Image
+                source={eye}
+                style={{
+                  width: 24,
+                  height: 24,
+                  tintColor: showPassword ? "#22c55e" : "#94a3b8",
+                }}
+              />
+            </TouchableOpacity>
+          </View>
         </View>
 
         {message.text ? (
@@ -205,6 +237,7 @@ const LoginScreen = () => {
         <TouchableOpacity style={styles.mainButton} onPress={handleLogin}>
           <Text style={styles.buttonText}>Giriş Yap</Text>
         </TouchableOpacity>
+
         <View style={styles.endWrapper}>
           <Text style={styles.roleText}>Hesabınız yok mu? </Text>
           <TouchableOpacity onPress={() => navigation.navigate("SignUp")}>

@@ -18,6 +18,13 @@
       "supportsTablet": true
     },
     "android": {
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "data": [{ "scheme": "dietapp" }],
+          "category": ["BROWSABLE", "DEFAULT"]
+        }
+      ],
       "package": "com.nurgul.dietapp",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",

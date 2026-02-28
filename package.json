@@ -27,6 +27,7 @@
     "@types/react": "~19.1.0",
     "@types/react-native": "^0.72.8",
     "dotenv": "^17.2.3",
+    "supabase": "^2.75.5",
     "typescript": "~5.9.2"
   },
   "private": true

@@ -9,6 +9,7 @@ import {
   HomeClient,
   HomeDyt,
   UpdatePassword,
+  ApprovalScreen,
 } from "../pages";
 export const navigationRef = createNavigationContainerRef();
 const RootStack = createNativeStackNavigator({
@@ -39,6 +40,10 @@ const RootStack = createNativeStackNavigator({
     },
     HomeDyt: {
       screen: HomeDyt,
+      options: { headerShown: false },
+    },
+    ApprovalScreen: {
+      screen: ApprovalScreen,
       options: { headerShown: false },
     },
   },

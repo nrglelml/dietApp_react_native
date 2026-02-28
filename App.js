@@ -8,6 +8,7 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [initialRoute, setInitialRoute] = useState(null);
   const hasDeepLink = React.useRef(false);
+  const pendingApproval = React.useRef(null);
 
   const linking = {
     prefixes: ["dietapp://"],
@@ -19,49 +20,61 @@ export default function App() {
   };
 
   useEffect(() => {
-    const checkUser = async () => {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+    const handleDeepLink = async (url) => {
+      if (!url) return;
 
-      if (user) {
-        const { data: profile } = await supabase
-          .from("profiles")
-          .select("role")
-          .eq("id", user.id)
-          .single();
-
-        if (profile.role === "dietitian") {
-          setIsDietitian(true);
-        }
-      }
-    };
-    checkUser();
-
-    const handleDeepLink = (url) => {
-      if (
-        url &&
-        (url.includes("update-password") || url.includes("type=recovery"))
-      ) {
-        console.log("Link algılandı:", url);
+      if (url.includes("update-password") || url.includes("type=recovery")) {
         hasDeepLink.current = true;
-
         if (navigationRef.isReady()) {
           navigationRef.reset({
             index: 0,
             routes: [{ name: "UpdatePassword", params: { recoveryUrl: url } }],
           });
         }
+        return;
+      }
+
+      if (url.includes("dietapp://approve")) {
+        hasDeepLink.current = true;
+
+        const urlObj = new URL(url.replace("dietapp://", "https://dietapp.com/"));
+        const params = {
+          dietitianId: urlObj.searchParams.get("dietitianId"),
+          dietitianName: urlObj.searchParams.get("dietitianName"),
+          targetEmail: urlObj.searchParams.get("targetEmail"),
+        };
+
+        const { data: { session } } = await supabase.auth.getSession();
+
+        if (navigationRef.isReady()) {
+          if (session) {
+            navigationRef.navigate("ApprovalScreen", params);
+          } else {
+            navigationRef.reset({
+              index: 0,
+              routes: [{
+                name: "Login",
+                params: {
+                  redirectTo: "ApprovalScreen",
+                  redirectParams: params,
+                },
+              }],
+            });
+          }
+        } else {
+          pendingApproval.current = { session, params };
+        }
+        return;
       }
     };
+
     const prepareApp = async () => {
       try {
         const url = await Linking.getInitialURL();
-        if (url) handleDeepLink(url);
+        if (url) await handleDeepLink(url);
 
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
+        const { data: { session } } = await supabase.auth.getSession();
+
         if (session && !hasDeepLink.current) {
           const { data: profile, error } = await supabase
             .from("profiles")
@@ -71,7 +84,7 @@ export default function App() {
 
           if (!error && profile) {
             setInitialRoute(
-              profile.role === "dietitian" ? "HomeDyt" : "HomeClient",
+              profile.role === "dietitian" ? "HomeDyt" : "HomeClient"
             );
           }
         }
@@ -87,17 +100,15 @@ export default function App() {
     const subscription = Linking.addEventListener("url", (event) => {
       handleDeepLink(event.url);
     });
+
     return () => subscription.remove();
   }, []);
 
   const handleNavigationReady = () => {
     if (!navigationRef.isReady()) return;
 
-    if (hasDeepLink.current) {
-      console.log("Deep link bulundu, yönlendirme başlıyor...");
+    if (hasDeepLink.current && !pendingApproval.current) {
       hasDeepLink.current = false;
-
-      // 100ms gecikme navigasyonun tamamen oturmasını sağlar
       setTimeout(() => {
         navigationRef.reset({
           index: 0,
@@ -107,7 +118,36 @@ export default function App() {
       return;
     }
 
-    // Normal initialRoute yönlendirmen buraya devam edebilir...
+    if (pendingApproval.current) {
+      const { session, params } = pendingApproval.current;
+      pendingApproval.current = null;
+      hasDeepLink.current = false;
+
+      setTimeout(() => {
+        if (session) {
+          navigationRef.navigate("ApprovalScreen", params);
+        } else {
+          navigationRef.reset({
+            index: 0,
+            routes: [{
+              name: "Login",
+              params: {
+                redirectTo: "ApprovalScreen",
+                redirectParams: params,
+              },
+            }],
+          });
+        }
+      }, 100);
+      return;
+    }
+
+    if (initialRoute) {
+      navigationRef.reset({
+        index: 0,
+        routes: [{ name: initialRoute }],
+      });
+    }
   };
 
   if (isLoading) {

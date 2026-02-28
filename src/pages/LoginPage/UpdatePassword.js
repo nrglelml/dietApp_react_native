@@ -21,10 +21,9 @@ const UpdatePassword = ({ route }) => {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState({ text: "", type: "" });
   const [isSessionReady, setIsSessionReady] = useState(false);
-  const navigation = useNavigation();
-
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const navigation = useNavigation();
 
   const showMessage = (text, type) => {
     setMessage({ text, type });
@@ -33,17 +32,24 @@ const UpdatePassword = ({ route }) => {
 
   useEffect(() => {
     const handleUrl = async (url) => {
-      console.log("handleUrl tetiklendi, gelen ham url:", url);
+      if (!url) return;
 
+      // URL içinde encode edilmiş URL varsa çöz
       let actualUrl = url;
       if (url.includes("url=")) {
-        const decodedUrl = decodeURIComponent(url.split("url=")[1]);
-        actualUrl = decodedUrl.split("&")[0];
-        console.log("Ayrıştırılmış gerçek URL:", actualUrl);
+        actualUrl = decodeURIComponent(url.split("url=")[1]).split("&")[0];
       }
 
-      if (!actualUrl || !actualUrl.includes("#access_token=")) {
-        console.log("Token bulunamadı, bekleniyor...");
+      // access_token hash'i var mı kontrol et
+      if (!actualUrl.includes("#access_token=")) {
+        // PKCE flow: code parametresi olabilir
+        if (actualUrl.includes("code=")) {
+          const { data, error } =
+            await supabase.auth.exchangeCodeForSession(actualUrl);
+          if (!error && data.session) {
+            setIsSessionReady(true);
+          }
+        }
         return;
       }
 
@@ -59,14 +65,11 @@ const UpdatePassword = ({ route }) => {
             access_token: accessToken,
             refresh_token: refreshToken,
           });
-
           if (error) throw error;
-
-          console.log("Sıfırlama oturumu AKTİF:", data.session?.user?.email);
           setIsSessionReady(true);
         }
       } catch (err) {
-        console.error("Session kurma hatası:", err.message);
+        showMessage("Oturum hatası: " + err.message, "error");
       } finally {
         setLoading(false);
       }
@@ -74,7 +77,6 @@ const UpdatePassword = ({ route }) => {
 
     const recoveryUrl = route.params?.recoveryUrl;
     if (recoveryUrl) {
-      console.log("Navigasyon parametresinden link alındı:", recoveryUrl);
       handleUrl(recoveryUrl);
     } else {
       Linking.getInitialURL().then((url) => {
@@ -94,7 +96,6 @@ const UpdatePassword = ({ route }) => {
       showMessage("Şifre en az 6 karakter olmalıdır.", "error");
       return;
     }
-
     if (newPassword !== confirmPassword) {
       showMessage("Şifreler eşleşmiyor!", "error");
       return;
@@ -105,14 +106,10 @@ const UpdatePassword = ({ route }) => {
       const { error } = await supabase.auth.updateUser({
         password: newPassword,
       });
-
       if (error) throw error;
 
       showMessage("Şifreniz başarıyla güncellendi!", "success");
-
-      setTimeout(() => {
-        navigation.navigate("Login");
-      }, 2000);
+      setTimeout(() => navigation.navigate("Login"), 2000);
     } catch (error) {
       showMessage("Güncelleme hatası: " + error.message, "error");
     } finally {
@@ -194,6 +191,19 @@ const UpdatePassword = ({ route }) => {
           <Text style={styles.messageText}>{message.text}</Text>
         </View>
       ) : null}
+
+      {!isSessionReady && !loading && (
+        <Text
+          style={{
+            textAlign: "center",
+            color: "#94a3b8",
+            marginTop: 20,
+            fontSize: 13,
+          }}
+        >
+          Bağlantı doğrulanıyor...
+        </Text>
+      )}
 
       <TouchableOpacity
         style={[
