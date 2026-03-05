@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import {
   View,
   Text,
@@ -11,6 +11,7 @@ import {
   Modal,
   Alert,
   TextInput,
+  RefreshControl,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { supabase } from "../../../supabase";
@@ -18,31 +19,18 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useNavigation } from "@react-navigation/native";
 
 const HomeDyt = () => {
-  const [logs, setLogs] = useState([]);
+  const [clients, setClients] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [dietitianId, setDietitianId] = useState(null);
   const [dietitianName, setDietitianName] = useState("");
-  const [stats, setStats] = useState({
-    totalClients: 0,
-    clientTrend: 0,
-    compliance: 0,
-    compTrend: 0,
-  });
+  const [stats, setStats] = useState({ totalClients: 0, thisWeek: 0 });
   const [modalVisible, setModalVisible] = useState(false);
   const [clientEmail, setClientEmail] = useState("");
+  const [sendingInvite, setSendingInvite] = useState(false);
+  const [clientsWithProgram, setClientsWithProgram] = useState(new Set());
 
   const navigation = useNavigation();
-  const handleLogout = async () => {
-    console.log("Çıkış işlemi başlatıldı...");
-    const { error } = await supabase.auth.signOut();
-    if (error) {
-      console.error("Çıkış hatası:", error.message);
-    } else {
-      navigation.reset({
-        index: 0,
-        routes: [{ name: "Welcome" }],
-      });
-    }
-  };
 
   useEffect(() => {
     fetchUserAndData();
@@ -53,31 +41,19 @@ const HomeDyt = () => {
       const {
         data: { user },
       } = await supabase.auth.getUser();
+      if (!user) return;
 
-      if (user) {
-        const { data: profile } = await supabase
-          .from("dietitian_profiles")
-          .select("full_name")
-          .eq("id", user.id)
-          .single();
+      setDietitianId(user.id);
 
-        if (profile) setDietitianName(profile.full_name);
+      const { data: profile } = await supabase
+        .from("dietitian_profiles")
+        .select("full_name")
+        .eq("id", user.id)
+        .single();
 
-        const { data: statData, error: rpcError } = await supabase.rpc(
-          "get_dietitian_stats_v2",
-          { dietitian_uuid: user.id },
-        );
+      if (profile) setDietitianName(profile.full_name);
 
-        if (!rpcError && statData?.length > 0) {
-          setStats({
-            totalClients: statData[0].total_clients,
-            clientTrend: statData[0].client_trend,
-            compliance: statData[0].avg_compliance,
-            compTrend: statData[0].compliance_trend,
-          });
-        }
-      }
-      await fetchMealLogs();
+      await fetchClients(user.id);
     } catch (error) {
       console.error("Yükleme hatası:", error.message);
     } finally {
@@ -85,59 +61,94 @@ const HomeDyt = () => {
     }
   };
 
-  const fetchMealLogs = async () => {
+  const fetchClients = async (dytId) => {
     const { data, error } = await supabase
-      .from("meal_logs")
-      .select(
-        `
-        id, photo_url, mood, created_at,
-        meal_plans!inner (
-          meal_type,
-          client_profiles (full_name, weight)
-        )
-      `,
-      )
-      .order("created_at", { ascending: false });
+      .from("client_profiles")
+      .select("id, full_name, weight, height, status, email, created_at")
+      .eq("dietitian_id", dytId)
+      .eq("status", "active")
+      .order("full_name", { ascending: true });
 
-    if (!error) setLogs(data);
+    if (error || !data) return;
+
+    setClients(data);
+
+    const weekAgo = new Date();
+    weekAgo.setDate(weekAgo.getDate() - 7);
+    const thisWeekCount = data.filter(
+      (c) => new Date(c.created_at) > weekAgo,
+    ).length;
+
+    setStats({ totalClients: data.length, thisWeek: thisWeekCount });
+
+    if (data.length > 0) {
+      const clientIds = data.map((c) => c.id);
+      const { data: programs } = await supabase
+        .from("diet_programs")
+        .select("client_id")
+        .eq("dietitian_id", dytId)
+        .in("client_id", clientIds);
+
+      if (programs) {
+        setClientsWithProgram(new Set(programs.map((p) => p.client_id)));
+      }
+    }
+  };
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    if (dietitianId) await fetchClients(dietitianId);
+    setRefreshing(false);
+  }, [dietitianId]);
+
+  const handleLogout = async () => {
+    Alert.alert("Çıkış Yap", "Hesabınızdan çıkmak istiyor musunuz?", [
+      { text: "İptal", style: "cancel" },
+      {
+        text: "Çıkış Yap",
+        style: "destructive",
+        onPress: async () => {
+          await supabase.auth.signOut();
+          navigation.reset({ index: 0, routes: [{ name: "Welcome" }] });
+        },
+      },
+    ]);
   };
 
   const addClient = async () => {
-    if (!clientEmail) {
+    if (!clientEmail.trim()) {
       Alert.alert("Hata", "Lütfen bir e-posta adresi girin.");
       return;
     }
 
+    setSendingInvite(true);
     try {
-      setLoading(true);
-
       const { data: userData, error: userError } = await supabase
         .from("client_profiles")
-        .select("id, full_name")
-        .eq("email", clientEmail.toLowerCase())
+        .select("id, full_name, dietitian_id")
+        .eq("email", clientEmail.toLowerCase().trim())
         .single();
 
       if (userError || !userData) {
-        Alert.alert("Hata", "Bu e-postaya sahip bir danışan bulunamadı.");
+        Alert.alert(
+          "Danışan Bulunamadı",
+          "Bu e-postaya sahip bir danışan bulunamadı. Danışanın önce uygulamaya kayıt olması gerekiyor.",
+        );
         return;
       }
 
-      if (!dietitianName) {
-        Alert.alert("Hata", "Diyetisyen bilgileri henüz yüklenmedi.");
+      if (userData.dietitian_id === dietitianId) {
+        Alert.alert("Bilgi", "Bu danışan zaten listenizde bulunuyor.");
         return;
       }
 
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+      const approvalUrl = `https://idyllic-cassata-8758dd.netlify.app/?dietitianId=${dietitianId}&dietitianName=${encodeURIComponent(dietitianName)}&targetEmail=${encodeURIComponent(clientEmail.toLowerCase().trim())}`;
 
-      const approvalUrl = `https://idyllic-cassata-8758dd.netlify.app/?dietitianId=${user.id}&dietitianName=${encodeURIComponent(dietitianName)}&targetEmail=${encodeURIComponent(clientEmail.toLowerCase())}`;
-
-      const { data, error: funcError } = await supabase.functions.invoke(
+      const { error: funcError } = await supabase.functions.invoke(
         "send-invite-email",
         {
           body: {
-            clientEmail: clientEmail.toLowerCase(),
+            clientEmail: clientEmail.toLowerCase().trim(),
             clientName: userData.full_name,
             dietitianName: dietitianName,
             approvalUrl: approvalUrl,
@@ -147,71 +158,132 @@ const HomeDyt = () => {
 
       if (funcError) throw funcError;
 
-      Alert.alert("Başarılı", "Davet e-postası sistem tarafından gönderildi!");
+      Alert.alert(
+        "Davet Gönderildi ✅",
+        `${userData.full_name} adlı danışana davet e-postası gönderildi.`,
+      );
       setModalVisible(false);
       setClientEmail("");
     } catch (error) {
       console.error("Hata:", error);
       Alert.alert("Hata", "E-posta gönderimi sırasında bir sorun oluştu.");
     } finally {
-      setLoading(false);
+      setSendingInvite(false);
     }
   };
 
-  const getTrendStyle = (value) => ({
-    backgroundColor: value >= 0 ? "#E5F9ED" : "#FEEBEB",
-    color: value >= 0 ? "#34C759" : "#FF3B30",
-  });
+  const getInitials = (name) => {
+    if (!name) return "?";
+    return name.trim().charAt(0).toUpperCase();
+  };
+
+  const getAvatarColor = (name) => {
+    const colors = [
+      "#34C759",
+      "#007AFF",
+      "#FF9500",
+      "#AF52DE",
+      "#FF2D55",
+      "#5AC8FA",
+    ];
+    if (!name) return colors[0];
+    return colors[name.charCodeAt(0) % colors.length];
+  };
 
   const renderClientItem = ({ item }) => {
-    const fullName =
-      item.meal_plans?.client_profiles?.full_name || "Bilinmeyen Danışan";
+    const hasProgram = clientsWithProgram.has(item.id);
+
     return (
-      <TouchableOpacity style={styles.clientCard} activeOpacity={0.7}>
+      <TouchableOpacity
+        style={styles.clientCard}
+        activeOpacity={0.7}
+        onPress={() =>
+          navigation.navigate("ClientDetail", {
+            clientId: item.id,
+            clientName: item.full_name,
+          })
+        }
+      >
         <View style={styles.clientInfo}>
           <View
             style={[
               styles.avatarPlaceholder,
-              { backgroundColor: item.mood === "Kötü" ? "#FF3B30" : "#34C759" },
+              { backgroundColor: getAvatarColor(item.full_name) },
             ]}
           >
-            <Text style={styles.avatarText}>{full_name.charAt(0)}</Text>
+            <Text style={styles.avatarText}>{getInitials(item.full_name)}</Text>
           </View>
+
           <View style={styles.textContainer}>
             <Text style={styles.clientName}>{item.full_name}</Text>
             <View style={styles.statusRow}>
-              <Text style={styles.clientWeightText}>{item.weight} kg •</Text>
-              <Text
-                style={[
-                  styles.complianceText,
-                  { color: item.compliance_rate < 50 ? "#FF3B30" : "#34C759" },
-                ]}
-              >
-                {" "}
-                %{item.compliance_rate || 0} Uyum
+              <Text style={styles.clientWeightText}>
+                {item.weight ? `${item.weight} kg` : "Kilo girilmemiş"}
               </Text>
+              // "Program var" badge'ini tıklanabilir yap
+              {hasProgram ? (
+                <TouchableOpacity
+                  onPress={() =>
+                    navigation.navigate("ClientDetail", {
+                      clientId: item.id,
+                      clientName: item.full_name,
+                      initialTab: 1, // Program sekmesi
+                    })
+                  }
+                  style={[styles.programBadge, { backgroundColor: "#E5F9ED" }]}
+                >
+                  <Ionicons name="checkmark-circle" size={12} color="#34C759" />
+                  <Text style={[styles.programBadgeText, { color: "#34C759" }]}>
+                    Program var
+                  </Text>
+                </TouchableOpacity>
+              ) : (
+                <View
+                  style={[styles.programBadge, { backgroundColor: "#FFF3E0" }]}
+                >
+                  <Ionicons name="time-outline" size={12} color="#FF9500" />
+                  <Text style={[styles.programBadgeText, { color: "#FF9500" }]}>
+                    Program yok
+                  </Text>
+                </View>
+              )}
             </View>
           </View>
         </View>
-        <View style={{ alignItems: "flex-end" }}>
+
+        <View style={{ alignItems: "flex-end", gap: 4 }}>
           <Ionicons name="chevron-forward" size={16} color="#C7C7CC" />
-          <Text style={styles.lastUpdateText}>Dün</Text>
+          {!hasProgram && (
+            <TouchableOpacity
+              onPress={() =>
+                navigation.navigate("CreateProgram", {
+                  clientId: item.id,
+                  clientName: item.full_name,
+                })
+              }
+              style={styles.createProgramBtn}
+            >
+              <Text style={styles.createProgramText}>Program Ekle</Text>
+            </TouchableOpacity>
+          )}
         </View>
       </TouchableOpacity>
     );
   };
 
-  if (loading)
+  if (loading) {
     return (
       <View style={styles.center}>
         <ActivityIndicator size="large" color="#34C759" />
       </View>
     );
+  }
 
   return (
     <SafeAreaView style={styles.safeArea}>
       <StatusBar barStyle="dark-content" />
 
+      {/* HEADER */}
       <View style={styles.header}>
         <View style={styles.headerTop}>
           <View style={styles.profileRow}>
@@ -225,93 +297,97 @@ const HomeDyt = () => {
               </Text>
             </View>
           </View>
-          <TouchableOpacity style={styles.notificationBtn}>
-            <Ionicons name="notifications-outline" size={24} color="#1C1C1E" />
-            <View style={styles.badge} />
-          </TouchableOpacity>
+          <View style={{ flexDirection: "row", gap: 8 }}>
+            <TouchableOpacity style={styles.notificationBtn}>
+              <Ionicons
+                name="notifications-outline"
+                size={24}
+                color="#1C1C1E"
+              />
+              {/* <View style={styles.badge} />*/}
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.notificationBtn}
+              onPress={handleLogout}
+            >
+              <Ionicons name="log-out-outline" size={24} color="#FF3B30" />
+            </TouchableOpacity>
+          </View>
         </View>
 
+        {/* İSTATİSTİK KARTLAR */}
         <View style={styles.statsContainer}>
           <View style={styles.statCard}>
             <Text style={styles.statLabel}>Toplam Danışan</Text>
             <View style={styles.valueRow}>
               <Text style={styles.statValue}>{stats.totalClients}</Text>
-              <View
-                style={[
-                  styles.trendBadge,
-                  {
-                    backgroundColor: getTrendStyle(stats.clientTrend)
-                      .backgroundColor,
-                  },
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.trendText,
-                    { color: getTrendStyle(stats.clientTrend).color },
-                  ]}
-                >
-                  {stats.clientTrend >= 0
-                    ? `+${stats.clientTrend}%`
-                    : `%${stats.clientTrend}`}
+              <View style={[styles.trendBadge, { backgroundColor: "#E5F9ED" }]}>
+                <Text style={[styles.trendText, { color: "#34C759" }]}>
+                  Aktif
                 </Text>
               </View>
             </View>
           </View>
 
           <View style={styles.statCard}>
-            <Text style={styles.statLabel}>Diyet Uyumu</Text>
+            <Text style={styles.statLabel}>Bu Hafta Eklenen</Text>
             <View style={styles.valueRow}>
-              <Text style={styles.statValue}>%{stats.compliance}</Text>
+              <Text style={styles.statValue}>{stats.thisWeek}</Text>
               <View
                 style={[
                   styles.trendBadge,
                   {
-                    backgroundColor: getTrendStyle(stats.compTrend)
-                      .backgroundColor,
+                    backgroundColor: stats.thisWeek > 0 ? "#E5F9ED" : "#F2F2F7",
                   },
                 ]}
               >
                 <Text
                   style={[
                     styles.trendText,
-                    { color: getTrendStyle(stats.compTrend).color },
+                    {
+                      color: stats.thisWeek > 0 ? "#34C759" : "#8E8E93",
+                    },
                   ]}
                 >
-                  {stats.compTrend >= 0
-                    ? `+${stats.compTrend}%`
-                    : `%${stats.compTrend}`}
+                  {stats.thisWeek > 0 ? `+${stats.thisWeek}` : "Yeni yok"}
                 </Text>
               </View>
             </View>
           </View>
         </View>
- 
+
         <View style={styles.listHeader}>
           <Text style={styles.sectionTitle}>Aktif Danışanlar</Text>
-          <Text style={styles.filterText}>Tümünü Gör</Text>
+          <Text style={styles.filterText}>{stats.totalClients} kişi</Text>
         </View>
       </View>
 
+      {/* DANİŞAN LİSTESİ */}
       <FlatList
-        data={logs}
+        data={clients}
         keyExtractor={(item) => item.id.toString()}
         renderItem={renderClientItem}
         contentContainerStyle={styles.listContent}
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor="#34C759"
+          />
+        }
         ListEmptyComponent={
-          <Text style={styles.emptyText}>Henüz bir aktivite bulunmuyor.</Text>
+          <View style={styles.emptyContainer}>
+            <Ionicons name="people-outline" size={60} color="#E5E5EA" />
+            <Text style={styles.emptyTitle}>Henüz danışanınız yok</Text>
+            <Text style={styles.emptyText}>
+              Alt menüdeki + butonuna basarak danışan ekleyebilirsiniz.
+            </Text>
+          </View>
         }
       />
-  {/* ÇIKIŞ YAP */}
-      <View style={styles.container}>
-        <Text style={styles.text}>Ana Sayfa </Text>
 
-        <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
-          <Text style={styles.buttonText}>Çıkış Yap</Text>
-        </TouchableOpacity>
-      </View>
-      {/* ÇIKIŞ YAP */}
+      {/* TAB BAR */}
       <View style={styles.tabBar}>
         <TouchableOpacity style={styles.tabItem}>
           <Ionicons name="people" size={24} color="#34C759" />
@@ -338,6 +414,8 @@ const HomeDyt = () => {
           <Text style={styles.tabText}>Ayarlar</Text>
         </TouchableOpacity>
       </View>
+
+      {/* DANİŞAN EKLE MODAL */}
       <Modal
         animationType="slide"
         transparent={true}
@@ -346,27 +424,49 @@ const HomeDyt = () => {
       >
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Yeni Danışan Ekle</Text>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Yeni Danışan Ekle</Text>
+              <TouchableOpacity onPress={() => setModalVisible(false)}>
+                <Ionicons name="close" size={24} color="#8E8E93" />
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.modalSubtitle}>
+              Danışanın e-posta adresini girin. Uygulamaya kayıtlı olmaları
+              gerekiyor.
+            </Text>
             <TextInput
-              style={styles.input}
-              placeholder="Danışan E-posta Adresi"
+              style={styles.modalInput}
+              placeholder="ornek@email.com"
               value={clientEmail}
               onChangeText={setClientEmail}
               autoCapitalize="none"
               keyboardType="email-address"
+              autoFocus
             />
             <View style={styles.modalButtons}>
               <TouchableOpacity
                 style={[styles.modalButton, styles.cancelButton]}
-                onPress={() => setModalVisible(false)}
+                onPress={() => {
+                  setModalVisible(false);
+                  setClientEmail("");
+                }}
               >
                 <Text style={styles.cancelButtonText}>Vazgeç</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.modalButton, styles.confirmButton]}
+                style={[
+                  styles.modalButton,
+                  styles.confirmButton,
+                  sendingInvite && { opacity: 0.7 },
+                ]}
                 onPress={addClient}
+                disabled={sendingInvite}
               >
-                <Text style={styles.confirmButtonText}>Ekle</Text>
+                {sendingInvite ? (
+                  <ActivityIndicator size="small" color="#FFF" />
+                ) : (
+                  <Text style={styles.confirmButtonText}>Davet Gönder</Text>
+                )}
               </TouchableOpacity>
             </View>
           </View>
@@ -377,84 +477,23 @@ const HomeDyt = () => {
 };
 
 const styles = StyleSheet.create({
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.5)",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  modalContent: {
-    width: "85%",
-    backgroundColor: "#FFF",
-    borderRadius: 25,
-    padding: 25,
-    alignItems: "center",
-    elevation: 5,
-  },
-  modalTitle: {
-    fontSize: 20,
-    fontWeight: "700",
-    marginBottom: 20,
-    color: "#1C1C1E",
-  },
-  input: {
-    width: "100%",
-    height: 50,
-    backgroundColor: "#F2F2F7",
-    borderRadius: 12,
-    paddingHorizontal: 15,
-    marginBottom: 20,
-  },
-  modalButtons: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    width: "100%",
-  },
-  modalButton: {
-    flex: 1,
-    height: 45,
-    borderRadius: 12,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  confirmButton: { backgroundColor: "#34C759", marginLeft: 10 },
-  cancelButton: { backgroundColor: "#F2F2F7" },
-  confirmButtonText: { color: "#FFF", fontWeight: "600" },
-  cancelButtonText: { color: "#8E8E93", fontWeight: "600" },
-  notificationBtn: {
-    padding: 8,
-    backgroundColor: "#F2F2F7",
-    borderRadius: 12,
-    position: "relative",
-  },
-  badge: {
-    position: "absolute",
-    top: 8,
-    right: 10,
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: "#FF3B30",
-    borderWidth: 2,
-    borderColor: "#FFF",
-  },
-  clientWeightText: { fontSize: 13, color: "#8E8E93" },
-  complianceText: { fontSize: 13, fontWeight: "700" },
-  lastUpdateText: { fontSize: 10, color: "#C7C7CC", marginTop: 4 },
-  emptyContainer: { alignItems: "center", marginTop: 50 },
   safeArea: {
     flex: 1,
-    backgroundColor: "#FFFFFF",
+    backgroundColor: "#F2F2F7",
     paddingTop: Platform.OS === "android" ? StatusBar.currentHeight : 0,
   },
   header: {
     paddingHorizontal: 20,
     paddingTop: 15,
+    paddingBottom: 20,
     backgroundColor: "#FFF",
     borderBottomLeftRadius: 30,
     borderBottomRightRadius: 30,
-    paddingBottom: 20,
     elevation: 3,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
   },
   headerTop: {
     flexDirection: "row",
@@ -474,7 +513,23 @@ const styles = StyleSheet.create({
   },
   welcomeText: { fontSize: 13, color: "#8E8E93" },
   portalTitle: { fontSize: 20, fontWeight: "700", color: "#1C1C1E" },
-  iconCircle: { backgroundColor: "#F2F2F7", padding: 10, borderRadius: 25 },
+  notificationBtn: {
+    padding: 8,
+    backgroundColor: "#F2F2F7",
+    borderRadius: 12,
+    position: "relative",
+  },
+  badge: {
+    position: "absolute",
+    top: 8,
+    right: 10,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: "#FF3B30",
+    borderWidth: 2,
+    borderColor: "#FFF",
+  },
   statsContainer: { flexDirection: "row", justifyContent: "space-between" },
   statCard: {
     width: "48%",
@@ -494,17 +549,17 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
   },
   statValue: { fontSize: 24, fontWeight: "700", color: "#1C1C1E" },
-  trendBadge: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 },
+  trendBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8 },
   trendText: { fontSize: 11, fontWeight: "700" },
   listHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginTop: 25,
+    marginTop: 20,
   },
   sectionTitle: { fontSize: 18, fontWeight: "700", color: "#1C1C1E" },
   filterText: { fontSize: 14, color: "#34C759", fontWeight: "600" },
-  listContent: { paddingHorizontal: 20, paddingTop: 20, paddingBottom: 100 },
+  listContent: { paddingHorizontal: 20, paddingTop: 16, paddingBottom: 100 },
   clientCard: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -514,29 +569,65 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     marginBottom: 12,
     elevation: 1,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 4,
   },
   clientInfo: { flexDirection: "row", alignItems: "center", flex: 1 },
   avatarPlaceholder: {
-    width: 45,
-    height: 45,
-    borderRadius: 22.5,
+    width: 46,
+    height: 46,
+    borderRadius: 23,
     justifyContent: "center",
     alignItems: "center",
-    marginRight: 15,
+    marginRight: 14,
   },
-  avatarText: { fontSize: 18, fontWeight: "700", color: "#FFFFFF" },
+  avatarText: { fontSize: 18, fontWeight: "700", color: "#FFF" },
   textContainer: { flex: 1 },
   clientName: { fontSize: 16, fontWeight: "600", color: "#1C1C1E" },
-  statusRow: { flexDirection: "row", alignItems: "center", marginTop: 4 },
-  statusTag: { fontSize: 13, fontWeight: "600" },
-  moodBadge: {
-    fontSize: 11,
-    color: "#8E8E93",
-    marginLeft: 8,
-    backgroundColor: "#F2F2F7",
-    paddingHorizontal: 6,
-    paddingVertical: 2,
+  statusRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 4,
+    gap: 8,
+    justifyContent: "space-around",
+  },
+  clientWeightText: { fontSize: 13, color: "#8E8E93" },
+  programBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
     borderRadius: 8,
+    gap: 3,
+    justifyContent: "space-around",
+  },
+  programBadgeText: { fontSize: 11, fontWeight: "600" },
+  createProgramBtn: {
+    backgroundColor: "#E5F9ED",
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  createProgramText: { fontSize: 11, color: "#34C759", fontWeight: "700" },
+  emptyContainer: {
+    alignItems: "center",
+    marginTop: 60,
+    paddingHorizontal: 40,
+  },
+  emptyTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: "#1C1C1E",
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  emptyText: {
+    textAlign: "center",
+    color: "#8E8E93",
+    fontSize: 14,
+    lineHeight: 20,
   },
   tabBar: {
     position: "absolute",
@@ -551,7 +642,7 @@ const styles = StyleSheet.create({
     borderTopColor: "#F2F2F7",
   },
   tabItem: { alignItems: "center" },
-  tabText: { fontSize: 10, marginTop: 4 },
+  tabText: { fontSize: 10, marginTop: 4, color: "#8E8E93" },
   fabButton: {
     width: 56,
     height: 56,
@@ -561,9 +652,57 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 30,
     elevation: 4,
+    shadowColor: "#34C759",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
   },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    justifyContent: "flex-end",
+  },
+  modalContent: {
+    backgroundColor: "#FFF",
+    borderRadius: 30,
+    padding: 28,
+    paddingBottom: 40,
+  },
+  modalHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 8,
+  },
+  modalTitle: { fontSize: 20, fontWeight: "700", color: "#1C1C1E" },
+  modalSubtitle: {
+    fontSize: 14,
+    color: "#8E8E93",
+    marginBottom: 20,
+    lineHeight: 20,
+  },
+  modalInput: {
+    width: "100%",
+    height: 52,
+    backgroundColor: "#F2F2F7",
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    marginBottom: 20,
+    fontSize: 15,
+  },
+  modalButtons: { flexDirection: "row", justifyContent: "space-between" },
+  modalButton: {
+    flex: 1,
+    height: 50,
+    borderRadius: 14,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  confirmButton: { backgroundColor: "#34C759", marginLeft: 10 },
+  cancelButton: { backgroundColor: "#F2F2F7" },
+  confirmButtonText: { color: "#FFF", fontWeight: "700", fontSize: 15 },
+  cancelButtonText: { color: "#8E8E93", fontWeight: "600", fontSize: 15 },
   center: { flex: 1, justifyContent: "center", alignItems: "center" },
-  emptyText: { textAlign: "center", marginTop: 40, color: "#8E8E93" },
 });
 
 export default HomeDyt;

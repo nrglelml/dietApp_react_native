@@ -1,0 +1,1098 @@
+import React, { useEffect, useState, useCallback } from "react";
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  TouchableOpacity,
+  ActivityIndicator,
+  StatusBar,
+  Platform,
+  RefreshControl,
+  Alert,
+} from "react-native";
+import { Ionicons } from "@expo/vector-icons";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { useNavigation, useRoute } from "@react-navigation/native";
+import { supabase } from "../../../supabase";
+
+const TABS = ["Profil", "Program", "Geçmiş"];
+
+const DAYS = [
+  "Pazartesi",
+  "Salı",
+  "Çarşamba",
+  "Perşembe",
+  "Cuma",
+  "Cumartesi",
+  "Pazar",
+];
+
+const getMonday = (date = new Date()) => {
+  const d = new Date(date);
+  const day = d.getDay();
+  const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+  d.setDate(diff);
+  d.setHours(0, 0, 0, 0);
+  return d;
+};
+
+const formatDate = (dateStr) => {
+  if (!dateStr) return "";
+  const d = new Date(dateStr + "T12:00:00"); 
+  return d.toLocaleDateString("tr-TR", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  });
+};
+
+const ClientDetail = () => {
+  const navigation = useNavigation();
+  const route = useRoute();
+
+  const { clientId, clientName, initialTab } = route.params || {};
+
+  const [activeTab, setActiveTab] = useState(initialTab ?? 0);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+
+  // Profil
+  const [profile, setProfile] = useState(null);
+
+  // Program
+  const [currentProgram, setCurrentProgram] = useState(null);
+  const [currentMeals, setCurrentMeals] = useState([]);
+  const [openDay, setOpenDay] = useState(0);
+
+  // Geçmiş
+  const [pastPrograms, setPastPrograms] = useState([]);
+
+  // Öğün takip özeti (ileride meal_logs'tan gelecek)
+  const [mealStats, setMealStats] = useState({ logged: 0, total: 0 });
+
+  useEffect(() => {
+    loadAll();
+  }, []);
+
+  const loadAll = async () => {
+    setLoading(true);
+    try {
+      await Promise.all([fetchProfile(), fetchPrograms()]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await Promise.all([fetchProfile(), fetchPrograms()]);
+    setRefreshing(false);
+  }, []);
+
+  const fetchProfile = async () => {
+    const { data } = await supabase
+      .from("client_profiles")
+      .select("*")
+      .eq("id", clientId)
+      .single();
+    if (data) setProfile(data);
+  };
+
+  const fetchPrograms = async () => {
+    const mondayStr = getMonday().toISOString().split("T")[0];
+
+    const { data: thisWeek } = await supabase
+      .from("diet_programs")
+      .select("*")
+      .eq("client_id", clientId)
+      .order("week_start", { ascending: false })
+      .limit(1)
+      .single();
+
+    if (thisWeek) {
+      setCurrentProgram(thisWeek);
+      const { data: meals } = await supabase
+        .from("diet_meals")
+        .select("*")
+        .eq("program_id", thisWeek.id)
+        .order("day_of_week")
+        .order("meal_time");
+      if (meals) {
+        setCurrentMeals(meals);
+        setMealStats({ logged: 0, total: meals.length });
+      }
+    } else {
+      setCurrentProgram(null);
+      setCurrentMeals([]);
+    }
+
+    // Geçmiş programlar
+    const { data: past } = await supabase
+      .from("diet_programs")
+      .select("*, diet_meals(count)")
+      .eq("client_id", clientId)
+      .neq("week_start", mondayStr)
+      .order("week_start", { ascending: false })
+      .limit(10);
+
+    if (past) setPastPrograms(past);
+  };
+
+  const getMealsByDay = (dayIndex) =>
+    currentMeals.filter((m) => m.day_of_week === dayIndex);
+
+  // ─── PROFIL SEKMESI ────────────────────────────────────────
+  const renderProfile = () => (
+    <ScrollView
+      contentContainerStyle={styles.tabContent}
+      refreshControl={
+        <RefreshControl
+          refreshing={refreshing}
+          onRefresh={onRefresh}
+          tintColor="#34C759"
+        />
+      }
+      showsVerticalScrollIndicator={false}
+    >
+      {/* Özet kartlar */}
+      <View style={styles.statsGrid}>
+        <StatCard
+          icon="scale-outline"
+          label="Mevcut Kilo"
+          value={profile?.weight ? `${profile.weight} kg` : "—"}
+          color="#007AFF"
+        />
+        <StatCard
+          icon="flag-outline"
+          label="Hedef Kilo"
+          value={profile?.target_weight ? `${profile.target_weight} kg` : "—"}
+          color="#34C759"
+        />
+        <StatCard
+          icon="resize-outline"
+          label="Boy"
+          value={profile?.height ? `${profile.height} cm` : "—"}
+          color="#FF9500"
+        />
+        <StatCard
+          icon="trending-down-outline"
+          label="Fark"
+          value={
+            profile?.weight && profile?.target_weight
+              ? `${(profile.weight - profile.target_weight).toFixed(1)} kg`
+              : "—"
+          }
+          color="#AF52DE"
+        />
+      </View>
+
+      {/* Alerji bilgisi */}
+      <View style={styles.card}>
+        <View style={styles.cardHeader}>
+          <Ionicons name="warning-outline" size={18} color="#FF9500" />
+          <Text style={styles.cardTitle}>Alerji / Kısıtlamalar</Text>
+        </View>
+        <Text style={styles.allergyText}>
+          {profile?.allergies || "Herhangi bir alerji bilgisi girilmemiş."}
+        </Text>
+      </View>
+
+      {/* Öğün takip özeti */}
+      <View style={styles.card}>
+        <View style={styles.cardHeader}>
+          <Ionicons name="restaurant-outline" size={18} color="#34C759" />
+          <Text style={styles.cardTitle}>Bu Hafta Öğün Takibi</Text>
+        </View>
+        {mealStats.total > 0 ? (
+          <View>
+            <View style={styles.progressBarBg}>
+              <View
+                style={[
+                  styles.progressBarFill,
+                  {
+                    width: `${
+                      mealStats.total > 0
+                        ? (mealStats.logged / mealStats.total) * 100
+                        : 0
+                    }%`,
+                  },
+                ]}
+              />
+            </View>
+            <Text style={styles.progressText}>
+              {mealStats.logged} / {mealStats.total} öğün takip edildi
+            </Text>
+          </View>
+        ) : (
+          <Text style={styles.emptyText}>Bu hafta için program atanmamış.</Text>
+        )}
+      </View>
+
+      {/* İletişim */}
+      <View style={styles.card}>
+        <View style={styles.cardHeader}>
+          <Ionicons name="mail-outline" size={18} color="#007AFF" />
+          <Text style={styles.cardTitle}>İletişim</Text>
+        </View>
+        <Text style={styles.emailText}>{profile?.email || "—"}</Text>
+      </View>
+
+      {/* Kayıt tarihi */}
+      <Text style={styles.joinDate}>
+        Katılım: {formatDate(profile?.created_at)}
+      </Text>
+    </ScrollView>
+  );
+
+  // ─── PROGRAM SEKMESI ───────────────────────────────────────
+  const renderProgram = () => (
+    <ScrollView
+      contentContainerStyle={styles.tabContent}
+      refreshControl={
+        <RefreshControl
+          refreshing={refreshing}
+          onRefresh={onRefresh}
+          tintColor="#34C759"
+        />
+      }
+      showsVerticalScrollIndicator={false}
+    >
+      {currentProgram ? (
+        <>
+          {/* Program başlık kartı */}
+          <View style={styles.programHeaderCard}>
+            <View>
+              <Text style={styles.programTitle}>{currentProgram.title}</Text>
+              <Text style={styles.programWeek}>
+                Hafta: {formatDate(currentProgram.week_start)}
+              </Text>
+            </View>
+            <View style={styles.programBadge}>
+              <Text style={styles.programBadgeText}>Bu Hafta</Text>
+            </View>
+          </View>
+
+          {/* Günler accordion */}
+          {DAYS.map((dayName, index) => {
+            const dayMeals = getMealsByDay(index);
+            const isOpen = openDay === index;
+
+            return (
+              <View key={index} style={styles.dayAccordion}>
+                <TouchableOpacity
+                  style={[styles.dayHeader, isOpen && styles.dayHeaderOpen]}
+                  onPress={() => setOpenDay(isOpen ? null : index)}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.dayHeaderLeft}>
+                    <View
+                      style={[styles.dayBadge, isOpen && styles.dayBadgeActive]}
+                    >
+                      <Text
+                        style={[
+                          styles.dayBadgeText,
+                          isOpen && styles.dayBadgeTextActive,
+                        ]}
+                      >
+                        {dayName.slice(0, 3)}
+                      </Text>
+                    </View>
+                    <Text
+                      style={[styles.dayLabel, isOpen && styles.dayLabelActive]}
+                    >
+                      {dayName}
+                    </Text>
+                  </View>
+                  <View style={styles.dayHeaderRight}>
+                    {dayMeals.length > 0 && (
+                      <View style={styles.mealCountBadge}>
+                        <Text style={styles.mealCountText}>
+                          {dayMeals.length} öğün
+                        </Text>
+                      </View>
+                    )}
+                    <Ionicons
+                      name={isOpen ? "chevron-up" : "chevron-down"}
+                      size={18}
+                      color={isOpen ? "#34C759" : "#C7C7CC"}
+                    />
+                  </View>
+                </TouchableOpacity>
+
+                {isOpen && (
+                  <View style={styles.dayContent}>
+                    {dayMeals.length === 0 ? (
+                      <Text style={styles.emptyDayText}>
+                        Bu gün için öğün eklenmemiş.
+                      </Text>
+                    ) : (
+                      dayMeals.map((meal) => (
+                        <View key={meal.id} style={styles.mealRow}>
+                          <View style={styles.mealTimeCol}>
+                            <Text style={styles.mealTime}>
+                              {meal.meal_time?.slice(0, 5)}
+                            </Text>
+                            {meal.meal_type && (
+                              <View style={styles.mealTypeBadge}>
+                                <Text style={styles.mealTypeText}>
+                                  {meal.meal_type}
+                                </Text>
+                              </View>
+                            )}
+                          </View>
+                          <View style={styles.mealInfoCol}>
+                            <Text style={styles.mealName}>
+                              {meal.meal_name}
+                            </Text>
+                            <View style={styles.mealMeta}>
+                              {meal.calories && (
+                                <Text style={styles.mealMetaText}>
+                                  🔥 {meal.calories} kcal
+                                </Text>
+                              )}
+                              {meal.portion && (
+                                <Text style={styles.mealMetaText}>
+                                  ⚖️ {meal.portion}
+                                </Text>
+                              )}
+                            </View>
+                            {meal.notes && (
+                              <Text style={styles.mealNotes}>{meal.notes}</Text>
+                            )}
+                          </View>
+                        </View>
+                      ))
+                    )}
+                  </View>
+                )}
+              </View>
+            );
+          })}
+        </>
+      ) : (
+        // Program yok
+        <View style={styles.noProgramContainer}>
+          <Ionicons name="calendar-outline" size={64} color="#E5E5EA" />
+          <Text style={styles.noProgramTitle}>Bu Hafta Program Yok</Text>
+          <Text style={styles.noProgramText}>
+            {clientName} için henüz bu haftaya ait bir diyet programı
+            oluşturulmamış.
+          </Text>
+          <TouchableOpacity
+            style={styles.createProgramBtn}
+            onPress={() =>
+              navigation.navigate("CreateProgram", { clientId, clientName })
+            }
+          >
+            <Ionicons name="add" size={20} color="#FFF" />
+            <Text style={styles.createProgramBtnText}>Program Oluştur</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {/* Program varsa altına da buton koy */}
+      {currentProgram && (
+        <TouchableOpacity
+          style={styles.newProgramBtn}
+          onPress={() =>
+            navigation.navigate("CreateProgram", { clientId, clientName })
+          }
+        >
+          <Ionicons name="add-circle-outline" size={18} color="#34C759" />
+          <Text style={styles.newProgramBtnText}>Yeni Program Oluştur</Text>
+        </TouchableOpacity>
+      )}
+    </ScrollView>
+  );
+
+  // ─── GECMİŞ SEKMESI ────────────────────────────────────────
+  const renderHistory = () => (
+    <ScrollView
+      contentContainerStyle={styles.tabContent}
+      refreshControl={
+        <RefreshControl
+          refreshing={refreshing}
+          onRefresh={onRefresh}
+          tintColor="#34C759"
+        />
+      }
+      showsVerticalScrollIndicator={false}
+    >
+      {pastPrograms.length === 0 ? (
+        <View style={styles.noProgramContainer}>
+          <Ionicons name="time-outline" size={64} color="#E5E5EA" />
+          <Text style={styles.noProgramTitle}>Geçmiş Program Yok</Text>
+          <Text style={styles.noProgramText}>
+            Önceki haftalara ait program bulunmuyor.
+          </Text>
+        </View>
+      ) : (
+        pastPrograms.map((program) => (
+          <View key={program.id} style={styles.historyCard}>
+            <View style={styles.historyCardLeft}>
+              <View style={styles.historyIcon}>
+                <Ionicons name="calendar" size={20} color="#007AFF" />
+              </View>
+              <View>
+                <Text style={styles.historyTitle}>{program.title}</Text>
+                <Text style={styles.historyDate}>
+                  {formatDate(program.week_start)}
+                </Text>
+              </View>
+            </View>
+            <Ionicons name="chevron-forward" size={16} color="#C7C7CC" />
+          </View>
+        ))
+      )}
+    </ScrollView>
+  );
+
+  if (loading) {
+    return (
+      <View style={styles.center}>
+        <ActivityIndicator size="large" color="#34C759" />
+      </View>
+    );
+  }
+
+  return (
+    <SafeAreaView style={styles.safeArea}>
+      <StatusBar barStyle="dark-content" />
+
+      {/* HEADER */}
+      <View style={styles.header}>
+        <TouchableOpacity
+          onPress={() => navigation.goBack()}
+          style={styles.backBtn}
+        >
+          <Ionicons name="chevron-back" size={24} color="#1C1C1E" />
+        </TouchableOpacity>
+
+        <View style={styles.headerCenter}>
+          <View
+            style={[
+              styles.avatar,
+              { backgroundColor: getAvatarColor(clientName) },
+            ]}
+          >
+            <Text style={styles.avatarText}>
+              {clientName?.charAt(0).toUpperCase()}
+            </Text>
+          </View>
+          <View>
+            <Text style={styles.headerName}>{clientName}</Text>
+            <View style={styles.activeBadge}>
+              <View style={styles.activeDot} />
+              <Text style={styles.activeText}>Aktif Danışan</Text>
+            </View>
+          </View>
+        </View>
+
+        <TouchableOpacity style={styles.moreBtn}>
+          <Ionicons name="ellipsis-horizontal" size={20} color="#1C1C1E" />
+        </TouchableOpacity>
+      </View>
+
+      {/* SEKMELER */}
+      <View style={styles.tabBar}>
+        {TABS.map((tab, index) => (
+          <TouchableOpacity
+            key={tab}
+            style={[styles.tab, activeTab === index && styles.tabActive]}
+            onPress={() => setActiveTab(index)}
+          >
+            <Text
+              style={[
+                styles.tabText,
+                activeTab === index && styles.tabTextActive,
+              ]}
+            >
+              {tab}
+            </Text>
+            {activeTab === index && <View style={styles.tabIndicator} />}
+          </TouchableOpacity>
+        ))}
+      </View>
+
+      {/* İÇERİK */}
+      {activeTab === 0 && renderProfile()}
+      {activeTab === 1 && renderProgram()}
+      {activeTab === 2 && renderHistory()}
+    </SafeAreaView>
+  );
+};
+
+const StatCard = ({ icon, label, value, color }) => (
+  <View style={[styles.statCard, { borderTopColor: color }]}>
+    <Ionicons name={icon} size={20} color={color} />
+    <Text style={styles.statValue}>{value}</Text>
+    <Text style={styles.statLabel}>{label}</Text>
+  </View>
+);
+
+const getAvatarColor = (name) => {
+  const colors = [
+    "#34C759",
+    "#007AFF",
+    "#FF9500",
+    "#AF52DE",
+    "#FF2D55",
+    "#5AC8FA",
+  ];
+  if (!name) return colors[0];
+  return colors[name.charCodeAt(0) % colors.length];
+};
+const DAY_SHORTS = ["Paz", "Pzt", "Sal", "Çar", "Per", "Cum", "Cmt"];
+
+const getDayShort = (dateStr) => {
+  const d = new Date(dateStr + "T12:00:00");
+  return DAY_SHORTS[d.getDay()];
+};
+
+const getDayFullName = (dateStr) => {
+  if (!dateStr) return "";
+  const days = [
+    "Pazar",
+    "Pazartesi",
+    "Salı",
+    "Çarşamba",
+    "Perşembe",
+    "Cuma",
+    "Cumartesi",
+  ];
+  return days[new Date(dateStr + "T12:00:00").getDay()];
+};
+
+const getProgramDays = (startStr, endStr) => {
+  if (!startStr || !endStr) return [];
+  const days = [];
+  const current = new Date(startStr + "T12:00:00");
+  const end = new Date(endStr + "T12:00:00");
+  while (current <= end) {
+    const y = current.getFullYear();
+    const m = String(current.getMonth() + 1).padStart(2, "0");
+    const d = String(current.getDate()).padStart(2, "0");
+    days.push(`${y}-${m}-${d}`);
+    current.setDate(current.getDate() + 1);
+  }
+  return days;
+};
+const renderProgram = () => {
+  const programDays = currentProgram
+    ? getProgramDays(
+        currentProgram.start_date || currentProgram.week_start,
+        currentProgram.end_date || currentProgram.week_start,
+      )
+    : [];
+
+  return (
+    <ScrollView
+      contentContainerStyle={styles.tabContent}
+      refreshControl={
+        <RefreshControl
+          refreshing={refreshing}
+          onRefresh={onRefresh}
+          tintColor="#34C759"
+        />
+      }
+      showsVerticalScrollIndicator={false}
+    >
+      {currentProgram ? (
+        <>
+          {/* Program başlık kartı */}
+          <View style={styles.programHeaderCard}>
+            <View>
+              <Text style={styles.programTitle}>{currentProgram.title}</Text>
+              <Text style={styles.programWeek}>
+                {formatDate(
+                  currentProgram.start_date || currentProgram.week_start,
+                )}
+                {currentProgram.end_date
+                  ? ` — ${formatDate(currentProgram.end_date)}`
+                  : ""}
+              </Text>
+            </View>
+            <View style={styles.programBadge}>
+              <Text style={styles.programBadgeText}>Aktif Program</Text>
+            </View>
+          </View>
+
+          {/* Günler — meal_date bazlı */}
+          {programDays.map((dateStr) => {
+            const dayMeals = currentMeals.filter(
+              (m) => m.meal_date === dateStr,
+            );
+            const isOpen = openDay === dateStr;
+
+            return (
+              <View key={dateStr} style={styles.dayAccordion}>
+                <TouchableOpacity
+                  style={[styles.dayHeader, isOpen && styles.dayHeaderOpen]}
+                  onPress={() => setOpenDay(isOpen ? null : dateStr)}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.dayHeaderLeft}>
+                    <View
+                      style={[styles.dayBadge, isOpen && styles.dayBadgeActive]}
+                    >
+                      <Text
+                        style={[
+                          styles.dayBadgeText,
+                          isOpen && styles.dayBadgeTextActive,
+                        ]}
+                      >
+                        {getDayShort(dateStr)}
+                      </Text>
+                    </View>
+                    <View>
+                      <Text
+                        style={[
+                          styles.dayLabel,
+                          isOpen && styles.dayLabelActive,
+                        ]}
+                      >
+                        {getDayFullName(dateStr)}
+                      </Text>
+                      <Text style={styles.dayDate}>{formatDate(dateStr)}</Text>
+                    </View>
+                  </View>
+                  <View style={styles.dayHeaderRight}>
+                    {dayMeals.length > 0 && (
+                      <View style={styles.mealCountBadge}>
+                        <Text style={styles.mealCountText}>
+                          {dayMeals.length} öğün
+                        </Text>
+                      </View>
+                    )}
+                    <Ionicons
+                      name={isOpen ? "chevron-up" : "chevron-down"}
+                      size={18}
+                      color={isOpen ? "#34C759" : "#C7C7CC"}
+                    />
+                  </View>
+                </TouchableOpacity>
+
+                {isOpen && (
+                  <View style={styles.dayContent}>
+                    {dayMeals.length === 0 ? (
+                      <Text style={styles.emptyDayText}>
+                        Bu gün için öğün eklenmemiş.
+                      </Text>
+                    ) : (
+                      dayMeals.map((meal) => (
+                        <View key={meal.id} style={styles.mealRow}>
+                          <View style={styles.mealTimeCol}>
+                            <Text style={styles.mealTime}>
+                              {meal.meal_time?.slice(0, 5)}
+                            </Text>
+                            {meal.meal_type && (
+                              <View style={styles.mealTypeBadge}>
+                                <Text style={styles.mealTypeText}>
+                                  {meal.meal_type}
+                                </Text>
+                              </View>
+                            )}
+                          </View>
+                          <View style={styles.mealInfoCol}>
+                            <Text style={styles.mealName}>
+                              {meal.meal_name}
+                            </Text>
+                            <View style={styles.mealMeta}>
+                              {meal.calories && (
+                                <Text style={styles.mealMetaText}>
+                                  🔥 {meal.calories} kcal
+                                </Text>
+                              )}
+                              {meal.portion && (
+                                <Text style={styles.mealMetaText}>
+                                  ⚖️ {meal.portion}
+                                </Text>
+                              )}
+                            </View>
+                            {meal.notes && (
+                              <Text style={styles.mealNotes}>{meal.notes}</Text>
+                            )}
+                          </View>
+                        </View>
+                      ))
+                    )}
+                  </View>
+                )}
+              </View>
+            );
+          })}
+        </>
+      ) : (
+        <View style={styles.noProgramContainer}>
+          <Ionicons name="calendar-outline" size={64} color="#E5E5EA" />
+          <Text style={styles.noProgramTitle}>Henüz Program Yok</Text>
+          <Text style={styles.noProgramText}>
+            {clientName} için henüz bir diyet programı oluşturulmamış.
+          </Text>
+          <TouchableOpacity
+            style={styles.createProgramBtn}
+            onPress={() =>
+              navigation.navigate("CreateProgram", { clientId, clientName })
+            }
+          >
+            <Ionicons name="add" size={20} color="#FFF" />
+            <Text style={styles.createProgramBtnText}>Program Oluştur</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {currentProgram && (
+        <TouchableOpacity
+          style={styles.newProgramBtn}
+          onPress={() =>
+            navigation.navigate("CreateProgram", { clientId, clientName })
+          }
+        >
+          <Ionicons name="add-circle-outline" size={18} color="#34C759" />
+          <Text style={styles.newProgramBtnText}>Yeni Program Oluştur</Text>
+        </TouchableOpacity>
+      )}
+    </ScrollView>
+  );
+};
+
+const styles = StyleSheet.create({
+  safeArea: {
+    flex: 1,
+    backgroundColor: "#F2F2F7",
+    paddingTop: Platform.OS === "android" ? StatusBar.currentHeight : 0,
+  },
+  center: { flex: 1, justifyContent: "center", alignItems: "center" },
+
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: "#FFF",
+    borderBottomWidth: 1,
+    borderBottomColor: "#F2F2F7",
+  },
+  backBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: "#F2F2F7",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  headerCenter: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingLeft: 8,
+  },
+  avatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  avatarText: { fontSize: 16, fontWeight: "700", color: "#FFF" },
+  headerName: { fontSize: 17, fontWeight: "700", color: "#1C1C1E" },
+  activeBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    marginTop: 2,
+  },
+  activeDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: "#34C759",
+  },
+  activeText: { fontSize: 12, color: "#34C759", fontWeight: "600" },
+  moreBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: "#F2F2F7",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+
+  // Tab bar
+  tabBar: {
+    flexDirection: "row",
+    backgroundColor: "#FFF",
+    borderBottomWidth: 1,
+    borderBottomColor: "#F2F2F7",
+  },
+  tab: {
+    flex: 1,
+    paddingVertical: 14,
+    alignItems: "center",
+    position: "relative",
+  },
+  tabActive: {},
+  tabText: { fontSize: 14, fontWeight: "600", color: "#8E8E93" },
+  tabTextActive: { color: "#34C759" },
+  tabIndicator: {
+    position: "absolute",
+    bottom: 0,
+    left: "20%",
+    right: "20%",
+    height: 2,
+    backgroundColor: "#34C759",
+    borderRadius: 1,
+  },
+
+  tabContent: { padding: 16, paddingBottom: 40 },
+
+  // Stats grid
+  statsGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+    marginBottom: 14,
+  },
+  statCard: {
+    width: "47%",
+    backgroundColor: "#FFF",
+    borderRadius: 16,
+    padding: 14,
+    borderTopWidth: 3,
+    elevation: 1,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 4,
+    gap: 4,
+  },
+  statValue: {
+    fontSize: 20,
+    fontWeight: "700",
+    color: "#1C1C1E",
+    marginTop: 4,
+  },
+  statLabel: { fontSize: 12, color: "#8E8E93" },
+
+  // Kartlar
+  card: {
+    backgroundColor: "#FFF",
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 12,
+    elevation: 1,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 4,
+  },
+  cardHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 10,
+  },
+  cardTitle: { fontSize: 15, fontWeight: "700", color: "#1C1C1E" },
+  allergyText: { fontSize: 14, color: "#3A3A3C", lineHeight: 20 },
+  emailText: { fontSize: 14, color: "#007AFF" },
+  joinDate: {
+    textAlign: "center",
+    fontSize: 12,
+    color: "#C7C7CC",
+    marginTop: 8,
+  },
+
+  // Progress
+  progressBarBg: {
+    height: 8,
+    backgroundColor: "#F2F2F7",
+    borderRadius: 4,
+    overflow: "hidden",
+  },
+  progressBarFill: {
+    height: "100%",
+    backgroundColor: "#34C759",
+    borderRadius: 4,
+  },
+  progressText: { fontSize: 13, color: "#8E8E93", marginTop: 6 },
+  emptyText: { fontSize: 13, color: "#C7C7CC" },
+
+  // Program
+  programHeaderCard: {
+    backgroundColor: "#FFF",
+    borderRadius: 16,
+    padding: 16,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 12,
+    elevation: 1,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 4,
+  },
+  programTitle: { fontSize: 16, fontWeight: "700", color: "#1C1C1E" },
+  programWeek: { fontSize: 13, color: "#8E8E93", marginTop: 2 },
+  programBadge: {
+    backgroundColor: "#E5F9ED",
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 10,
+  },
+  programBadgeText: { fontSize: 12, color: "#34C759", fontWeight: "700" },
+
+  // Accordion
+  dayAccordion: {
+    backgroundColor: "#FFF",
+    borderRadius: 16,
+    marginBottom: 8,
+    overflow: "hidden",
+    elevation: 1,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 4,
+  },
+  dayHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: 14,
+  },
+  dayHeaderOpen: { borderBottomWidth: 1, borderBottomColor: "#F2F2F7" },
+  dayHeaderLeft: { flexDirection: "row", alignItems: "center", gap: 10 },
+  dayBadge: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: "#F2F2F7",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  dayBadgeActive: { backgroundColor: "#E5F9ED" },
+  dayBadgeText: { fontSize: 12, fontWeight: "700", color: "#8E8E93" },
+  dayBadgeTextActive: { color: "#34C759" },
+  dayLabel: { fontSize: 16, fontWeight: "600", color: "#1C1C1E" },
+  dayLabelActive: { color: "#34C759" },
+  dayHeaderRight: { flexDirection: "row", alignItems: "center", gap: 8 },
+  mealCountBadge: {
+    backgroundColor: "#E5F9ED",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+  },
+  mealCountText: { fontSize: 12, color: "#34C759", fontWeight: "700" },
+  dayContent: { padding: 12, gap: 8 },
+  emptyDayText: {
+    fontSize: 13,
+    color: "#C7C7CC",
+    textAlign: "center",
+    paddingVertical: 12,
+  },
+
+  // Öğün satırı
+  mealRow: {
+    flexDirection: "row",
+    gap: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: "#F2F2F7",
+  },
+  mealTimeCol: { width: 60, alignItems: "center" },
+  mealTime: { fontSize: 14, fontWeight: "700", color: "#1C1C1E" },
+  mealTypeBadge: {
+    backgroundColor: "#F2F2F7",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    marginTop: 4,
+  },
+  mealTypeText: { fontSize: 10, color: "#8E8E93", fontWeight: "600" },
+  mealInfoCol: { flex: 1 },
+  mealName: { fontSize: 15, fontWeight: "600", color: "#1C1C1E" },
+  mealMeta: { flexDirection: "row", gap: 10, marginTop: 4 },
+  mealMetaText: { fontSize: 12, color: "#8E8E93" },
+  mealNotes: {
+    fontSize: 12,
+    color: "#8E8E93",
+    marginTop: 4,
+    fontStyle: "italic",
+  },
+
+  // Program yok
+  noProgramContainer: {
+    alignItems: "center",
+    paddingVertical: 40,
+    paddingHorizontal: 30,
+    gap: 12,
+  },
+  noProgramTitle: { fontSize: 18, fontWeight: "700", color: "#1C1C1E" },
+  noProgramText: {
+    fontSize: 14,
+    color: "#8E8E93",
+    textAlign: "center",
+    lineHeight: 20,
+  },
+  createProgramBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: "#34C759",
+    paddingHorizontal: 24,
+    paddingVertical: 14,
+    borderRadius: 16,
+    marginTop: 8,
+    elevation: 2,
+    shadowColor: "#34C759",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+  },
+  createProgramBtnText: { color: "#FFF", fontWeight: "700", fontSize: 15 },
+  newProgramBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 14,
+    borderWidth: 1.5,
+    borderColor: "#34C759",
+    borderRadius: 14,
+    borderStyle: "dashed",
+    marginTop: 8,
+  },
+  newProgramBtnText: { fontSize: 14, color: "#34C759", fontWeight: "700" },
+
+  // Geçmiş
+  historyCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: "#FFF",
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 10,
+    elevation: 1,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 4,
+  },
+  historyCardLeft: { flexDirection: "row", alignItems: "center", gap: 12 },
+  historyIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: "#EEF4FF",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  historyTitle: { fontSize: 15, fontWeight: "600", color: "#1C1C1E" },
+  historyDate: { fontSize: 12, color: "#8E8E93", marginTop: 2 },
+});
+
+export default ClientDetail;

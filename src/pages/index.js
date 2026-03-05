@@ -6,6 +6,8 @@ import HomeDyt from "./Dietitian/HomeDyt";
 import VerifyOTP from "./SignUpPage/VerifyOTP";
 import UpdatePassword from "./LoginPage/UpdatePassword";
 import ApprovalScreen from "./Client/ApprovalScreen";
+import CreateProgram from "./Dietitian/CreateProgram";
+import ClientDetail from "./Dietitian/ClientDetail";
 export {
   WelcomeScreen,
   SignUpScreen,
@@ -15,4 +17,6 @@ export {
   VerifyOTP,
   UpdatePassword,
   ApprovalScreen,
+  CreateProgram,
+  ClientDetail,
 };
