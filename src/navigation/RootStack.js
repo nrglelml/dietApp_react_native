@@ -12,6 +12,7 @@ import {
   ApprovalScreen,
   CreateProgram,
   ClientDetail,
+  DietitianCalendar,
 } from "../pages";
 export const navigationRef = createNavigationContainerRef();
 const RootStack = createNativeStackNavigator({
@@ -54,6 +55,10 @@ const RootStack = createNativeStackNavigator({
     },
     ClientDetail: {
       screen: ClientDetail,
+      options: { headerShown: false },
+    },
+    DietitianCalendar: {
+      screen: DietitianCalendar,
       options: { headerShown: false },
     },
   },

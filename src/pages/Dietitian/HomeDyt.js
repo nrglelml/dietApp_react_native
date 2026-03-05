@@ -220,14 +220,13 @@ const HomeDyt = () => {
               <Text style={styles.clientWeightText}>
                 {item.weight ? `${item.weight} kg` : "Kilo girilmemiş"}
               </Text>
-              // "Program var" badge'ini tıklanabilir yap
               {hasProgram ? (
                 <TouchableOpacity
                   onPress={() =>
                     navigation.navigate("ClientDetail", {
                       clientId: item.id,
                       clientName: item.full_name,
-                      initialTab: 1, // Program sekmesi
+                      initialTab: 1,
                     })
                   }
                   style={[styles.programBadge, { backgroundColor: "#E5F9ED" }]}
@@ -405,7 +404,10 @@ const HomeDyt = () => {
             <Ionicons name="add" size={32} color="#FFF" />
           </View>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.tabItem}>
+        <TouchableOpacity
+          style={styles.tabItem}
+          onPress={() => navigation.navigate("DietitianCalendar")}
+        >
           <Ionicons name="calendar-outline" size={24} color="#8E8E93" />
           <Text style={styles.tabText}>Randevu</Text>
         </TouchableOpacity>

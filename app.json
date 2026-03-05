@@ -21,8 +21,15 @@
       "intentFilters": [
         {
           "action": "VIEW",
-          "data": [{ "scheme": "dietapp" }],
-          "category": ["BROWSABLE", "DEFAULT"]
+          "data": [
+            {
+              "scheme": "dietapp"
+            }
+          ],
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
         }
       ],
       "package": "com.nurgul.dietapp",
@@ -35,6 +42,9 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "plugins": [
+      "@react-native-community/datetimepicker"
+    ]
   }
 }

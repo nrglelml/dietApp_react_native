@@ -8,6 +8,7 @@ import UpdatePassword from "./LoginPage/UpdatePassword";
 import ApprovalScreen from "./Client/ApprovalScreen";
 import CreateProgram from "./Dietitian/CreateProgram";
 import ClientDetail from "./Dietitian/ClientDetail";
+import DietitianCalendar from "./Dietitian/DietitianCalendar";
 export {
   WelcomeScreen,
   SignUpScreen,
@@ -19,4 +20,5 @@ export {
   ApprovalScreen,
   CreateProgram,
   ClientDetail,
+  DietitianCalendar,
 };
