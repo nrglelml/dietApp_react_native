@@ -17,6 +17,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useNavigation, useRoute } from "@react-navigation/native";
 import { Calendar, LocaleConfig } from "react-native-calendars";
+import DateTimePicker from "@react-native-community/datetimepicker";
 import { supabase } from "../../../supabase";
 
 LocaleConfig.locales["tr"] = {
@@ -63,6 +64,7 @@ LocaleConfig.locales["tr"] = {
 LocaleConfig.defaultLocale = "tr";
 
 const MEAL_TYPES = ["Kahvaltı", "Ara Öğün", "Öğle", "İkindi", "Akşam", "Gece"];
+const DAY_SHORTS = ["Paz", "Pzt", "Sal", "Çar", "Per", "Cum", "Cmt"];
 
 const emptyMeal = () => ({
   id: Date.now() + Math.random(),
@@ -74,35 +76,17 @@ const emptyMeal = () => ({
   notes: "",
   showOptional: false,
 });
-const DAY_SHORTS = ["Paz", "Pzt", "Sal", "Çar", "Per", "Cum", "Cmt"];
 
-const getDayShort = (dateStr) => {
-  const d = new Date(dateStr + "T12:00:00");
-  return DAY_SHORTS[d.getDay()];
-};
+const getDayShort = (dateStr) =>
+  DAY_SHORTS[new Date(dateStr + "T12:00:00").getDay()];
+
 const formatDateTR = (dateStr) => {
   if (!dateStr) return "";
-  const d = new Date(dateStr + "T12:00:00");
-  return d.toLocaleDateString("tr-TR", {
+  return new Date(dateStr + "T12:00:00").toLocaleDateString("tr-TR", {
     day: "numeric",
     month: "long",
     year: "numeric",
   });
-};
-
-const getDayName = (dateStr) => {
-  if (!dateStr) return "";
-  const d = new Date(dateStr + "T12:00:00");
-  const days = [
-    "Pazar",
-    "Pazartesi",
-    "Salı",
-    "Çarşamba",
-    "Perşembe",
-    "Cuma",
-    "Cumartesi",
-  ];
-  return days[d.getDay()];
 };
 
 const getDaysBetween = (startStr, endStr) => {
@@ -120,6 +104,16 @@ const getDaysBetween = (startStr, endStr) => {
   return days;
 };
 
+const timeStrToDate = (timeStr) => {
+  const [h, m] = (timeStr || "08:00").split(":").map(Number);
+  const d = new Date();
+  d.setHours(h, m, 0, 0);
+  return d;
+};
+
+const dateToTimeStr = (date) =>
+  `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+
 const today = new Date().toISOString().split("T")[0];
 
 const CreateProgram = () => {
@@ -132,10 +126,13 @@ const CreateProgram = () => {
   const [endDate, setEndDate] = useState(null);
   const [calendarVisible, setCalendarVisible] = useState(false);
   const [selectingStart, setSelectingStart] = useState(true);
-
   const [openDay, setOpenDay] = useState(null);
   const [meals, setMeals] = useState({});
   const [saving, setSaving] = useState(false);
+
+  // Time picker: hangi öğünün picker'ı açık
+  const [activeTimePicker, setActiveTimePicker] = useState(null); // { dateStr, mealId }
+  const [pickerTime, setPickerTime] = useState(new Date());
 
   const programDays = useMemo(
     () => getDaysBetween(startDate, endDate),
@@ -192,7 +189,6 @@ const CreateProgram = () => {
       [dateStr]: [...(prev[dateStr] || []), emptyMeal()],
     }));
   };
-
   const updateMeal = (dateStr, mealId, field, value) => {
     setMeals((prev) => ({
       ...prev,
@@ -201,14 +197,12 @@ const CreateProgram = () => {
       ),
     }));
   };
-
   const removeMeal = (dateStr, mealId) => {
     setMeals((prev) => ({
       ...prev,
       [dateStr]: (prev[dateStr] || []).filter((m) => m.id !== mealId),
     }));
   };
-
   const toggleOptional = (dateStr, mealId) => {
     setMeals((prev) => ({
       ...prev,
@@ -216,6 +210,24 @@ const CreateProgram = () => {
         m.id === mealId ? { ...m, showOptional: !m.showOptional } : m,
       ),
     }));
+  };
+
+  const openTimePicker = (dateStr, meal) => {
+    setPickerTime(timeStrToDate(meal.meal_time || "08:00"));
+    setActiveTimePicker({ dateStr, mealId: meal.id });
+  };
+
+  const onTimeChange = (event, selected) => {
+    if (Platform.OS === "android") setActiveTimePicker(null);
+    if (selected && activeTimePicker) {
+      const timeStr = dateToTimeStr(selected);
+      updateMeal(
+        activeTimePicker.dateStr,
+        activeTimePicker.mealId,
+        "meal_time",
+        timeStr,
+      );
+    }
   };
 
   const totalMeals = Object.values(meals).reduce((sum, d) => sum + d.length, 0);
@@ -249,13 +261,11 @@ const CreateProgram = () => {
         }
       }
     }
-
     setSaving(true);
     try {
       const {
         data: { user },
       } = await supabase.auth.getUser();
-
       const { data: program, error: programError } = await supabase
         .from("diet_programs")
         .insert({
@@ -268,7 +278,6 @@ const CreateProgram = () => {
         })
         .select()
         .single();
-
       if (programError) throw programError;
 
       const allMeals = [];
@@ -287,14 +296,12 @@ const CreateProgram = () => {
           });
         }
       }
-
       if (allMeals.length > 0) {
         const { error: mealsError } = await supabase
           .from("diet_meals")
           .insert(allMeals);
         if (mealsError) throw mealsError;
       }
-
       Alert.alert(
         "Program Oluşturuldu! 🎉",
         `${clientName} için diyet programı kaydedildi.\n${formatDateTR(startDate)} — ${formatDateTR(endDate)}`,
@@ -352,19 +359,33 @@ const CreateProgram = () => {
       </ScrollView>
 
       <View style={{ flexDirection: "row", marginBottom: 8 }}>
+        {/* SAAT — TimePicker butonu */}
         <View style={[styles.inputWrapper, { flex: 1 }]}>
           <Text style={styles.inputLabel}>Saat *</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="08:00"
-            value={meal.meal_time}
-            onChangeText={(v) =>
-              updateMeal(dateStr, meal.id, "meal_time", v.replace(".", ":"))
-            }
-            keyboardType="numbers-and-punctuation"
-            maxLength={5}
-          />
+          <TouchableOpacity
+            style={[
+              styles.input,
+              styles.timePickerBtn,
+              meal.meal_time && styles.timePickerBtnSelected,
+            ]}
+            onPress={() => openTimePicker(dateStr, meal)}
+          >
+            <Ionicons
+              name="time-outline"
+              size={15}
+              color={meal.meal_time ? "#34C759" : "#8E8E93"}
+            />
+            <Text
+              style={[
+                styles.timePickerText,
+                meal.meal_time && { color: "#1C1C1E" },
+              ]}
+            >
+              {meal.meal_time || "Seç"}
+            </Text>
+          </TouchableOpacity>
         </View>
+
         <View style={[styles.inputWrapper, { flex: 2.2, marginLeft: 8 }]}>
           <Text style={styles.inputLabel}>Öğün Adı *</Text>
           <TextInput
@@ -471,7 +492,6 @@ const CreateProgram = () => {
             />
           </View>
         </TouchableOpacity>
-
         {isOpen && (
           <View style={styles.dayContent}>
             {dayMeals.length === 0 ? (
@@ -567,9 +587,7 @@ const CreateProgram = () => {
                 </Text>
               </View>
             </TouchableOpacity>
-
             <Ionicons name="arrow-forward" size={16} color="#C7C7CC" />
-
             <TouchableOpacity
               style={[styles.dateCard, endDate && styles.dateCardSelected]}
               onPress={() =>
@@ -630,7 +648,6 @@ const CreateProgram = () => {
               </Text>
             </View>
           )}
-
           <View style={{ height: 40 }} />
         </ScrollView>
       </KeyboardAvoidingView>
@@ -652,7 +669,6 @@ const CreateProgram = () => {
                 <Ionicons name="close" size={24} color="#8E8E93" />
               </TouchableOpacity>
             </View>
-
             {!selectingStart && (
               <View style={styles.calendarHint}>
                 <Ionicons
@@ -665,12 +681,12 @@ const CreateProgram = () => {
                 </Text>
               </View>
             )}
-
             <Calendar
               onDayPress={handleDayPress}
               markedDates={markedDates}
               markingType="period"
               minDate={selectingStart ? today : startDate}
+              firstDay={1}
               theme={{
                 todayTextColor: "#34C759",
                 selectedDayBackgroundColor: "#34C759",
@@ -679,7 +695,6 @@ const CreateProgram = () => {
                 textMonthFontWeight: "700",
               }}
             />
-
             {selectingStart && startDate && (
               <TouchableOpacity
                 style={styles.nextBtn}
@@ -691,6 +706,18 @@ const CreateProgram = () => {
           </View>
         </View>
       </Modal>
+
+      {/* TIME PICKER */}
+      {activeTimePicker && (
+        <DateTimePicker
+          value={pickerTime}
+          mode="time"
+          display={Platform.OS === "ios" ? "spinner" : "default"}
+          onChange={onTimeChange}
+          is24Hour
+          locale="tr-TR"
+        />
+      )}
     </SafeAreaView>
   );
 };
@@ -872,6 +899,14 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#E5E5EA",
   },
+  timePickerBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    justifyContent: "center",
+  },
+  timePickerBtnSelected: { borderColor: "#34C759", backgroundColor: "#F0FDF4" },
+  timePickerText: { fontSize: 14, fontWeight: "700", color: "#8E8E93" },
   chip: {
     paddingHorizontal: 10,
     paddingVertical: 5,

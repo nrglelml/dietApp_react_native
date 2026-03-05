@@ -12,11 +12,31 @@ import {
   Alert,
   TextInput,
   RefreshControl,
+  ScrollView,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { supabase } from "../../../supabase";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useNavigation } from "@react-navigation/native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { DietitianTabBar } from "../../components";
+
+const toLocalDateStr = (date = new Date()) => {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+};
+
+const todayStr = toLocalDateStr();
+
+const formatDateTR = (dateStr) => {
+  if (!dateStr) return "";
+  return new Date(dateStr + "T12:00:00").toLocaleDateString("tr-TR", {
+    day: "numeric",
+    month: "long",
+  });
+};
 
 const HomeDyt = () => {
   const [clients, setClients] = useState([]);
@@ -25,16 +45,43 @@ const HomeDyt = () => {
   const [dietitianId, setDietitianId] = useState(null);
   const [dietitianName, setDietitianName] = useState("");
   const [stats, setStats] = useState({ totalClients: 0, thisWeek: 0 });
-  const [modalVisible, setModalVisible] = useState(false);
-  const [clientEmail, setClientEmail] = useState("");
-  const [sendingInvite, setSendingInvite] = useState(false);
   const [clientsWithProgram, setClientsWithProgram] = useState(new Set());
+
+  // Uyarı sistemi
+  const [warnings, setWarnings] = useState([]);
+  const [dismissedWarnings, setDismissedWarnings] = useState(new Set());
 
   const navigation = useNavigation();
 
   useEffect(() => {
+    loadDismissed();
     fetchUserAndData();
   }, []);
+
+  const loadDismissed = async () => {
+    try {
+      const raw = await AsyncStorage.getItem("dismissed_warnings");
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        // Sadece bugünün tarihindeki dismiss'leri tut (her gün sıfırlanır)
+        const todayKey = `dismissed_${todayStr}`;
+        const todayDismissed = parsed[todayKey] || [];
+        setDismissedWarnings(new Set(todayDismissed));
+      }
+    } catch (e) {}
+  };
+
+  const dismissWarning = async (warningId) => {
+    const updated = new Set([...dismissedWarnings, warningId]);
+    setDismissedWarnings(updated);
+    try {
+      const todayKey = `dismissed_${todayStr}`;
+      const raw = await AsyncStorage.getItem("dismissed_warnings");
+      const parsed = raw ? JSON.parse(raw) : {};
+      parsed[todayKey] = [...updated];
+      await AsyncStorage.setItem("dismissed_warnings", JSON.stringify(parsed));
+    } catch (e) {}
+  };
 
   const fetchUserAndData = async () => {
     try {
@@ -42,7 +89,6 @@ const HomeDyt = () => {
         data: { user },
       } = await supabase.auth.getUser();
       if (!user) return;
-
       setDietitianId(user.id);
 
       const { data: profile } = await supabase
@@ -50,7 +96,6 @@ const HomeDyt = () => {
         .select("full_name")
         .eq("id", user.id)
         .single();
-
       if (profile) setDietitianName(profile.full_name);
 
       await fetchClients(user.id);
@@ -70,7 +115,6 @@ const HomeDyt = () => {
       .order("full_name", { ascending: true });
 
     if (error || !data) return;
-
     setClients(data);
 
     const weekAgo = new Date();
@@ -78,19 +122,60 @@ const HomeDyt = () => {
     const thisWeekCount = data.filter(
       (c) => new Date(c.created_at) > weekAgo,
     ).length;
-
     setStats({ totalClients: data.length, thisWeek: thisWeekCount });
 
     if (data.length > 0) {
       const clientIds = data.map((c) => c.id);
+
+      // Program badge
       const { data: programs } = await supabase
         .from("diet_programs")
         .select("client_id")
         .eq("dietitian_id", dytId)
         .in("client_id", clientIds);
-
-      if (programs) {
+      if (programs)
         setClientsWithProgram(new Set(programs.map((p) => p.client_id)));
+
+      // Bitiş uyarıları için en son programları çek
+      const { data: latestPrograms } = await supabase
+        .from("diet_programs")
+        .select("client_id, end_date, title")
+        .eq("dietitian_id", dytId)
+        .in("client_id", clientIds)
+        .not("end_date", "is", null)
+        .order("end_date", { ascending: false });
+
+      if (latestPrograms) {
+        // Her danışan için sadece en son programı al
+        const latestByClient = {};
+        latestPrograms.forEach((p) => {
+          if (!latestByClient[p.client_id]) latestByClient[p.client_id] = p;
+        });
+
+        const newWarnings = [];
+        data.forEach((client) => {
+          const prog = latestByClient[client.id];
+          if (!prog) return;
+          const endDate = prog.end_date;
+          if (endDate === todayStr) {
+            newWarnings.push({
+              id: `${client.id}_${endDate}`,
+              clientId: client.id,
+              clientName: client.full_name,
+              endDate,
+              type: "today",
+            });
+          } else if (endDate < todayStr) {
+            newWarnings.push({
+              id: `${client.id}_${endDate}`,
+              clientId: client.id,
+              clientName: client.full_name,
+              endDate,
+              type: "expired",
+            });
+          }
+        });
+        setWarnings(newWarnings);
       }
     }
   };
@@ -115,68 +200,7 @@ const HomeDyt = () => {
     ]);
   };
 
-  const addClient = async () => {
-    if (!clientEmail.trim()) {
-      Alert.alert("Hata", "Lütfen bir e-posta adresi girin.");
-      return;
-    }
-
-    setSendingInvite(true);
-    try {
-      const { data: userData, error: userError } = await supabase
-        .from("client_profiles")
-        .select("id, full_name, dietitian_id")
-        .eq("email", clientEmail.toLowerCase().trim())
-        .single();
-
-      if (userError || !userData) {
-        Alert.alert(
-          "Danışan Bulunamadı",
-          "Bu e-postaya sahip bir danışan bulunamadı. Danışanın önce uygulamaya kayıt olması gerekiyor.",
-        );
-        return;
-      }
-
-      if (userData.dietitian_id === dietitianId) {
-        Alert.alert("Bilgi", "Bu danışan zaten listenizde bulunuyor.");
-        return;
-      }
-
-      const approvalUrl = `https://idyllic-cassata-8758dd.netlify.app/?dietitianId=${dietitianId}&dietitianName=${encodeURIComponent(dietitianName)}&targetEmail=${encodeURIComponent(clientEmail.toLowerCase().trim())}`;
-
-      const { error: funcError } = await supabase.functions.invoke(
-        "send-invite-email",
-        {
-          body: {
-            clientEmail: clientEmail.toLowerCase().trim(),
-            clientName: userData.full_name,
-            dietitianName: dietitianName,
-            approvalUrl: approvalUrl,
-          },
-        },
-      );
-
-      if (funcError) throw funcError;
-
-      Alert.alert(
-        "Davet Gönderildi ✅",
-        `${userData.full_name} adlı danışana davet e-postası gönderildi.`,
-      );
-      setModalVisible(false);
-      setClientEmail("");
-    } catch (error) {
-      console.error("Hata:", error);
-      Alert.alert("Hata", "E-posta gönderimi sırasında bir sorun oluştu.");
-    } finally {
-      setSendingInvite(false);
-    }
-  };
-
-  const getInitials = (name) => {
-    if (!name) return "?";
-    return name.trim().charAt(0).toUpperCase();
-  };
-
+  const getInitials = (name) => name?.trim().charAt(0).toUpperCase() || "?";
   const getAvatarColor = (name) => {
     const colors = [
       "#34C759",
@@ -190,9 +214,75 @@ const HomeDyt = () => {
     return colors[name.charCodeAt(0) % colors.length];
   };
 
+  // Görünür uyarılar (dismiss edilmemişler)
+  const visibleWarnings = warnings.filter((w) => !dismissedWarnings.has(w.id));
+
+  const renderWarningBanner = () => {
+    if (visibleWarnings.length === 0) return null;
+    return (
+      <View style={styles.warningContainer}>
+        {visibleWarnings.map((w) => (
+          <View
+            key={w.id}
+            style={[
+              styles.warningBanner,
+              w.type === "expired"
+                ? styles.warningExpired
+                : styles.warningToday,
+            ]}
+          >
+            <View style={styles.warningIcon}>
+              <Ionicons
+                name={w.type === "expired" ? "alert-circle" : "time"}
+                size={20}
+                color={w.type === "expired" ? "#FF3B30" : "#FF9500"}
+              />
+            </View>
+            <View style={styles.warningBody}>
+              <Text
+                style={[
+                  styles.warningTitle,
+                  { color: w.type === "expired" ? "#FF3B30" : "#FF9500" },
+                ]}
+              >
+                {w.type === "expired"
+                  ? "⚠️ Program Süresi Doldu"
+                  : "📅 Program Bugün Bitiyor"}
+              </Text>
+              <Text style={styles.warningText}>
+                {w.clientName} —{" "}
+                {w.type === "expired"
+                  ? `${formatDateTR(w.endDate)} tarihinde bitti`
+                  : "Bugün son gün, yeni program oluşturun"}
+              </Text>
+            </View>
+            <View style={styles.warningActions}>
+              <TouchableOpacity
+                style={styles.warningNewBtn}
+                onPress={() =>
+                  navigation.navigate("CreateProgram", {
+                    clientId: w.clientId,
+                    clientName: w.clientName,
+                  })
+                }
+              >
+                <Text style={styles.warningNewBtnText}>Yenile</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => dismissWarning(w.id)}
+                style={styles.warningDismiss}
+              >
+                <Ionicons name="close" size={16} color="#8E8E93" />
+              </TouchableOpacity>
+            </View>
+          </View>
+        ))}
+      </View>
+    );
+  };
+
   const renderClientItem = ({ item }) => {
     const hasProgram = clientsWithProgram.has(item.id);
-
     return (
       <TouchableOpacity
         style={styles.clientCard}
@@ -213,7 +303,6 @@ const HomeDyt = () => {
           >
             <Text style={styles.avatarText}>{getInitials(item.full_name)}</Text>
           </View>
-
           <View style={styles.textContainer}>
             <Text style={styles.clientName}>{item.full_name}</Text>
             <View style={styles.statusRow}>
@@ -249,7 +338,6 @@ const HomeDyt = () => {
             </View>
           </View>
         </View>
-
         <View style={{ alignItems: "flex-end", gap: 4 }}>
           <Ionicons name="chevron-forward" size={16} color="#C7C7CC" />
           {!hasProgram && (
@@ -270,13 +358,12 @@ const HomeDyt = () => {
     );
   };
 
-  if (loading) {
+  if (loading)
     return (
       <View style={styles.center}>
         <ActivityIndicator size="large" color="#34C759" />
       </View>
     );
-  }
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -303,7 +390,7 @@ const HomeDyt = () => {
                 size={24}
                 color="#1C1C1E"
               />
-              {/* <View style={styles.badge} />*/}
+              {visibleWarnings.length > 0 && <View style={styles.badge} />}
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.notificationBtn}
@@ -314,7 +401,6 @@ const HomeDyt = () => {
           </View>
         </View>
 
-        {/* İSTATİSTİK KARTLAR */}
         <View style={styles.statsContainer}>
           <View style={styles.statCard}>
             <Text style={styles.statLabel}>Toplam Danışan</Text>
@@ -327,7 +413,6 @@ const HomeDyt = () => {
               </View>
             </View>
           </View>
-
           <View style={styles.statCard}>
             <Text style={styles.statLabel}>Bu Hafta Eklenen</Text>
             <View style={styles.valueRow}>
@@ -343,9 +428,7 @@ const HomeDyt = () => {
                 <Text
                   style={[
                     styles.trendText,
-                    {
-                      color: stats.thisWeek > 0 ? "#34C759" : "#8E8E93",
-                    },
+                    { color: stats.thisWeek > 0 ? "#34C759" : "#8E8E93" },
                   ]}
                 >
                   {stats.thisWeek > 0 ? `+${stats.thisWeek}` : "Yeni yok"}
@@ -360,6 +443,18 @@ const HomeDyt = () => {
           <Text style={styles.filterText}>{stats.totalClients} kişi</Text>
         </View>
       </View>
+
+      {/* UYARI BANNER'LARI */}
+      {visibleWarnings.length > 0 && (
+        <ScrollView
+          horizontal={false}
+          showsVerticalScrollIndicator={false}
+          style={styles.warningScrollArea}
+          nestedScrollEnabled
+        >
+          {renderWarningBanner()}
+        </ScrollView>
+      )}
 
       {/* DANİŞAN LİSTESİ */}
       <FlatList
@@ -385,95 +480,7 @@ const HomeDyt = () => {
           </View>
         }
       />
-
-      {/* TAB BAR */}
-      <View style={styles.tabBar}>
-        <TouchableOpacity style={styles.tabItem}>
-          <Ionicons name="people" size={24} color="#34C759" />
-          <Text style={[styles.tabText, { color: "#34C759" }]}>Danışanlar</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.tabItem}>
-          <Ionicons name="book-outline" size={24} color="#8E8E93" />
-          <Text style={styles.tabText}>Tarifler</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.tabItem}
-          onPress={() => setModalVisible(true)}
-        >
-          <View style={styles.fabButton}>
-            <Ionicons name="add" size={32} color="#FFF" />
-          </View>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.tabItem}
-          onPress={() => navigation.navigate("DietitianCalendar")}
-        >
-          <Ionicons name="calendar-outline" size={24} color="#8E8E93" />
-          <Text style={styles.tabText}>Randevu</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.tabItem}>
-          <Ionicons name="settings-outline" size={24} color="#8E8E93" />
-          <Text style={styles.tabText}>Ayarlar</Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* DANİŞAN EKLE MODAL */}
-      <Modal
-        animationType="slide"
-        transparent={true}
-        visible={modalVisible}
-        onRequestClose={() => setModalVisible(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Yeni Danışan Ekle</Text>
-              <TouchableOpacity onPress={() => setModalVisible(false)}>
-                <Ionicons name="close" size={24} color="#8E8E93" />
-              </TouchableOpacity>
-            </View>
-            <Text style={styles.modalSubtitle}>
-              Danışanın e-posta adresini girin. Uygulamaya kayıtlı olmaları
-              gerekiyor.
-            </Text>
-            <TextInput
-              style={styles.modalInput}
-              placeholder="ornek@email.com"
-              value={clientEmail}
-              onChangeText={setClientEmail}
-              autoCapitalize="none"
-              keyboardType="email-address"
-              autoFocus
-            />
-            <View style={styles.modalButtons}>
-              <TouchableOpacity
-                style={[styles.modalButton, styles.cancelButton]}
-                onPress={() => {
-                  setModalVisible(false);
-                  setClientEmail("");
-                }}
-              >
-                <Text style={styles.cancelButtonText}>Vazgeç</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[
-                  styles.modalButton,
-                  styles.confirmButton,
-                  sendingInvite && { opacity: 0.7 },
-                ]}
-                onPress={addClient}
-                disabled={sendingInvite}
-              >
-                {sendingInvite ? (
-                  <ActivityIndicator size="small" color="#FFF" />
-                ) : (
-                  <Text style={styles.confirmButtonText}>Davet Gönder</Text>
-                )}
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
+      <DietitianTabBar />
     </SafeAreaView>
   );
 };
@@ -484,6 +491,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#F2F2F7",
     paddingTop: Platform.OS === "android" ? StatusBar.currentHeight : 0,
   },
+  center: { flex: 1, justifyContent: "center", alignItems: "center" },
   header: {
     paddingHorizontal: 20,
     paddingTop: 15,
@@ -561,6 +569,49 @@ const styles = StyleSheet.create({
   },
   sectionTitle: { fontSize: 18, fontWeight: "700", color: "#1C1C1E" },
   filterText: { fontSize: 14, color: "#34C759", fontWeight: "600" },
+
+  // Uyarı banner
+  warningScrollArea: { maxHeight: 90 },
+  warningContainer: { paddingHorizontal: 16, paddingTop: 10, gap: 8 },
+  warningBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderRadius: 14,
+    padding: 12,
+    gap: 10,
+    marginBottom: 8,
+  },
+  warningToday: {
+    backgroundColor: "#FFF9ED",
+    borderWidth: 1,
+    borderColor: "#FF9500",
+  },
+  warningExpired: {
+    backgroundColor: "#FFF0EE",
+    borderWidth: 1,
+    borderColor: "#FF3B30",
+  },
+  warningIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: "#FFF",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  warningBody: { flex: 1 },
+  warningTitle: { fontSize: 12, fontWeight: "800", marginBottom: 2 },
+  warningText: { fontSize: 12, color: "#3A3A3C", lineHeight: 16 },
+  warningActions: { flexDirection: "row", alignItems: "center", gap: 6 },
+  warningNewBtn: {
+    backgroundColor: "#34C759",
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+  },
+  warningNewBtnText: { fontSize: 11, color: "#FFF", fontWeight: "700" },
+  warningDismiss: { padding: 4 },
+
   listContent: { paddingHorizontal: 20, paddingTop: 16, paddingBottom: 100 },
   clientCard: {
     flexDirection: "row",
@@ -603,7 +654,6 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
     borderRadius: 8,
     gap: 3,
-    justifyContent: "space-around",
   },
   programBadgeText: { fontSize: 11, fontWeight: "600" },
   createProgramBtn: {
@@ -704,7 +754,6 @@ const styles = StyleSheet.create({
   cancelButton: { backgroundColor: "#F2F2F7" },
   confirmButtonText: { color: "#FFF", fontWeight: "700", fontSize: 15 },
   cancelButtonText: { color: "#8E8E93", fontWeight: "600", fontSize: 15 },
-  center: { flex: 1, justifyContent: "center", alignItems: "center" },
 });
 
 export default HomeDyt;

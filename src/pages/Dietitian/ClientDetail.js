@@ -10,6 +10,7 @@ import {
   Platform,
   RefreshControl,
   Alert,
+  Modal,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -18,58 +19,73 @@ import { supabase } from "../../../supabase";
 
 const TABS = ["Profil", "Program", "Geçmiş"];
 
-const DAYS = [
-  "Pazartesi",
-  "Salı",
-  "Çarşamba",
-  "Perşembe",
-  "Cuma",
-  "Cumartesi",
-  "Pazar",
-];
-
-const getMonday = (date = new Date()) => {
-  const d = new Date(date);
-  const day = d.getDay();
-  const diff = d.getDate() - day + (day === 0 ? -6 : 1);
-  d.setDate(diff);
-  d.setHours(0, 0, 0, 0);
-  return d;
+const DAY_SHORTS = ["Paz", "Pzt", "Sal", "Çar", "Per", "Cum", "Cmt"];
+const getDayShort = (dateStr) =>
+  DAY_SHORTS[new Date(dateStr + "T12:00:00").getDay()];
+const getDayFullName = (dateStr) => {
+  const days = [
+    "Pazar",
+    "Pazartesi",
+    "Salı",
+    "Çarşamba",
+    "Perşembe",
+    "Cuma",
+    "Cumartesi",
+  ];
+  return days[new Date(dateStr + "T12:00:00").getDay()];
 };
-
 const formatDate = (dateStr) => {
   if (!dateStr) return "";
-  const d = new Date(dateStr + "T12:00:00"); 
-  return d.toLocaleDateString("tr-TR", {
+  return new Date(dateStr + "T12:00:00").toLocaleDateString("tr-TR", {
     day: "numeric",
     month: "long",
     year: "numeric",
   });
 };
+const getProgramDays = (startStr, endStr) => {
+  if (!startStr || !endStr) return [];
+  const days = [];
+  const current = new Date(startStr + "T12:00:00");
+  const end = new Date(endStr + "T12:00:00");
+  while (current <= end) {
+    const y = current.getFullYear();
+    const m = String(current.getMonth() + 1).padStart(2, "0");
+    const d = String(current.getDate()).padStart(2, "0");
+    days.push(`${y}-${m}-${d}`);
+    current.setDate(current.getDate() + 1);
+  }
+  return days;
+};
+const getAvatarColor = (name) => {
+  const colors = [
+    "#34C759",
+    "#007AFF",
+    "#FF9500",
+    "#AF52DE",
+    "#FF2D55",
+    "#5AC8FA",
+  ];
+  if (!name) return colors[0];
+  return colors[name.charCodeAt(0) % colors.length];
+};
 
 const ClientDetail = () => {
   const navigation = useNavigation();
   const route = useRoute();
-
   const { clientId, clientName, initialTab } = route.params || {};
 
   const [activeTab, setActiveTab] = useState(initialTab ?? 0);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-
-  // Profil
   const [profile, setProfile] = useState(null);
-
-  // Program
   const [currentProgram, setCurrentProgram] = useState(null);
   const [currentMeals, setCurrentMeals] = useState([]);
-  const [openDay, setOpenDay] = useState(0);
-
-  // Geçmiş
+  const [openDay, setOpenDay] = useState(null);
   const [pastPrograms, setPastPrograms] = useState([]);
-
-  // Öğün takip özeti (ileride meal_logs'tan gelecek)
   const [mealStats, setMealStats] = useState({ logged: 0, total: 0 });
+
+  // Menü
+  const [menuVisible, setMenuVisible] = useState(false);
 
   useEffect(() => {
     loadAll();
@@ -100,9 +116,7 @@ const ClientDetail = () => {
   };
 
   const fetchPrograms = async () => {
-    const mondayStr = getMonday().toISOString().split("T")[0];
-
-    const { data: thisWeek } = await supabase
+    const { data: latest } = await supabase
       .from("diet_programs")
       .select("*")
       .eq("client_id", clientId)
@@ -110,13 +124,13 @@ const ClientDetail = () => {
       .limit(1)
       .single();
 
-    if (thisWeek) {
-      setCurrentProgram(thisWeek);
+    if (latest) {
+      setCurrentProgram(latest);
       const { data: meals } = await supabase
         .from("diet_meals")
         .select("*")
-        .eq("program_id", thisWeek.id)
-        .order("day_of_week")
+        .eq("program_id", latest.id)
+        .order("meal_date")
         .order("meal_time");
       if (meals) {
         setCurrentMeals(meals);
@@ -127,22 +141,82 @@ const ClientDetail = () => {
       setCurrentMeals([]);
     }
 
-    // Geçmiş programlar
     const { data: past } = await supabase
       .from("diet_programs")
       .select("*, diet_meals(count)")
       .eq("client_id", clientId)
-      .neq("week_start", mondayStr)
       .order("week_start", { ascending: false })
-      .limit(10);
-
+      .limit(20);
     if (past) setPastPrograms(past);
   };
 
-  const getMealsByDay = (dayIndex) =>
-    currentMeals.filter((m) => m.day_of_week === dayIndex);
+  // ─── PROGRAM SİL ────────────────────────────────────────
+  const handleDeleteProgram = (program) => {
+    Alert.alert(
+      "Programı Sil",
+      `"${program.title}" programını silmek istediğinizden emin misiniz? Bu işlem geri alınamaz.`,
+      [
+        { text: "İptal", style: "cancel" },
+        {
+          text: "Sil",
+          style: "destructive",
+          onPress: async () => {
+            await supabase
+              .from("diet_meals")
+              .delete()
+              .eq("program_id", program.id);
+            await supabase.from("diet_programs").delete().eq("id", program.id);
+            await fetchPrograms();
+          },
+        },
+      ],
+    );
+  };
 
-  // ─── PROFIL SEKMESI ────────────────────────────────────────
+  // ─── DANİŞAN SİL ────────────────────────────────────────
+  const handleRemoveClient = () => {
+    setMenuVisible(false);
+    Alert.alert(
+      "Danışanı Kaldır",
+      `${clientName} adlı danışanı listenizden kaldırmak istediğinizden emin misiniz?\n\nDanışanın tüm program ve öğün verileri silinecektir.`,
+      [
+        { text: "İptal", style: "cancel" },
+        {
+          text: "Kaldır",
+          style: "destructive",
+          onPress: async () => {
+            // Önce programlara bağlı öğünleri sil
+            const { data: programs } = await supabase
+              .from("diet_programs")
+              .select("id")
+              .eq("client_id", clientId);
+            if (programs?.length) {
+              const programIds = programs.map((p) => p.id);
+              await supabase
+                .from("diet_meals")
+                .delete()
+                .in("program_id", programIds);
+              await supabase
+                .from("diet_programs")
+                .delete()
+                .eq("client_id", clientId);
+            }
+            await supabase
+              .from("appointments")
+              .delete()
+              .eq("client_id", clientId);
+            await supabase
+              .from("client_profiles")
+              .update({ dietitian_id: null, status: "inactive" })
+              .eq("id", clientId);
+            navigation.goBack();
+          },
+        },
+      ],
+    );
+  };
+
+  // ─── PROFIL ────────────────────────────────────────────
   const renderProfile = () => (
     <ScrollView
       contentContainerStyle={styles.tabContent}
@@ -155,7 +229,6 @@ const ClientDetail = () => {
       }
       showsVerticalScrollIndicator={false}
     >
-      {/* Özet kartlar */}
       <View style={styles.statsGrid}>
         <StatCard
           icon="scale-outline"
@@ -186,8 +259,6 @@ const ClientDetail = () => {
           color="#AF52DE"
         />
       </View>
-
-      {/* Alerji bilgisi */}
       <View style={styles.card}>
         <View style={styles.cardHeader}>
           <Ionicons name="warning-outline" size={18} color="#FF9500" />
@@ -197,12 +268,10 @@ const ClientDetail = () => {
           {profile?.allergies || "Herhangi bir alerji bilgisi girilmemiş."}
         </Text>
       </View>
-
-      {/* Öğün takip özeti */}
       <View style={styles.card}>
         <View style={styles.cardHeader}>
           <Ionicons name="restaurant-outline" size={18} color="#34C759" />
-          <Text style={styles.cardTitle}>Bu Hafta Öğün Takibi</Text>
+          <Text style={styles.cardTitle}>Öğün Takibi</Text>
         </View>
         {mealStats.total > 0 ? (
           <View>
@@ -210,13 +279,7 @@ const ClientDetail = () => {
               <View
                 style={[
                   styles.progressBarFill,
-                  {
-                    width: `${
-                      mealStats.total > 0
-                        ? (mealStats.logged / mealStats.total) * 100
-                        : 0
-                    }%`,
-                  },
+                  { width: `${(mealStats.logged / mealStats.total) * 100}%` },
                 ]}
               />
             </View>
@@ -225,11 +288,9 @@ const ClientDetail = () => {
             </Text>
           </View>
         ) : (
-          <Text style={styles.emptyText}>Bu hafta için program atanmamış.</Text>
+          <Text style={styles.emptyText}>Program atanmamış.</Text>
         )}
       </View>
-
-      {/* İletişim */}
       <View style={styles.card}>
         <View style={styles.cardHeader}>
           <Ionicons name="mail-outline" size={18} color="#007AFF" />
@@ -237,176 +298,203 @@ const ClientDetail = () => {
         </View>
         <Text style={styles.emailText}>{profile?.email || "—"}</Text>
       </View>
-
-      {/* Kayıt tarihi */}
       <Text style={styles.joinDate}>
         Katılım: {formatDate(profile?.created_at)}
       </Text>
     </ScrollView>
   );
 
-  // ─── PROGRAM SEKMESI ───────────────────────────────────────
-  const renderProgram = () => (
-    <ScrollView
-      contentContainerStyle={styles.tabContent}
-      refreshControl={
-        <RefreshControl
-          refreshing={refreshing}
-          onRefresh={onRefresh}
-          tintColor="#34C759"
-        />
-      }
-      showsVerticalScrollIndicator={false}
-    >
-      {currentProgram ? (
-        <>
-          {/* Program başlık kartı */}
-          <View style={styles.programHeaderCard}>
-            <View>
-              <Text style={styles.programTitle}>{currentProgram.title}</Text>
-              <Text style={styles.programWeek}>
-                Hafta: {formatDate(currentProgram.week_start)}
-              </Text>
-            </View>
-            <View style={styles.programBadge}>
-              <Text style={styles.programBadgeText}>Bu Hafta</Text>
-            </View>
-          </View>
+  // ─── PROGRAM ──────────────────────────────────────────
+  const renderProgram = () => {
+    const programDays = currentProgram
+      ? getProgramDays(
+          currentProgram.start_date || currentProgram.week_start,
+          currentProgram.end_date || currentProgram.week_start,
+        )
+      : [];
 
-          {/* Günler accordion */}
-          {DAYS.map((dayName, index) => {
-            const dayMeals = getMealsByDay(index);
-            const isOpen = openDay === index;
-
-            return (
-              <View key={index} style={styles.dayAccordion}>
+    return (
+      <ScrollView
+        contentContainerStyle={styles.tabContent}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor="#34C759"
+          />
+        }
+        showsVerticalScrollIndicator={false}
+      >
+        {currentProgram ? (
+          <>
+            <View style={styles.programHeaderCard}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.programTitle}>{currentProgram.title}</Text>
+                <Text style={styles.programWeek}>
+                  {formatDate(
+                    currentProgram.start_date || currentProgram.week_start,
+                  )}
+                  {currentProgram.end_date
+                    ? ` — ${formatDate(currentProgram.end_date)}`
+                    : ""}
+                </Text>
+              </View>
+              <View style={styles.programHeaderRight}>
+                <View style={styles.programBadge}>
+                  <Text style={styles.programBadgeText}>Aktif Program</Text>
+                </View>
                 <TouchableOpacity
-                  style={[styles.dayHeader, isOpen && styles.dayHeaderOpen]}
-                  onPress={() => setOpenDay(isOpen ? null : index)}
-                  activeOpacity={0.7}
+                  style={styles.deleteProgramBtn}
+                  onPress={() => handleDeleteProgram(currentProgram)}
                 >
-                  <View style={styles.dayHeaderLeft}>
-                    <View
-                      style={[styles.dayBadge, isOpen && styles.dayBadgeActive]}
-                    >
-                      <Text
+                  <Ionicons name="trash-outline" size={16} color="#FF3B30" />
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            {programDays.map((dateStr) => {
+              const dayMeals = currentMeals.filter(
+                (m) => m.meal_date === dateStr,
+              );
+              const isOpen = openDay === dateStr;
+              return (
+                <View key={dateStr} style={styles.dayAccordion}>
+                  <TouchableOpacity
+                    style={[styles.dayHeader, isOpen && styles.dayHeaderOpen]}
+                    onPress={() => setOpenDay(isOpen ? null : dateStr)}
+                    activeOpacity={0.7}
+                  >
+                    <View style={styles.dayHeaderLeft}>
+                      <View
                         style={[
-                          styles.dayBadgeText,
-                          isOpen && styles.dayBadgeTextActive,
+                          styles.dayBadge,
+                          isOpen && styles.dayBadgeActive,
                         ]}
                       >
-                        {dayName.slice(0, 3)}
-                      </Text>
-                    </View>
-                    <Text
-                      style={[styles.dayLabel, isOpen && styles.dayLabelActive]}
-                    >
-                      {dayName}
-                    </Text>
-                  </View>
-                  <View style={styles.dayHeaderRight}>
-                    {dayMeals.length > 0 && (
-                      <View style={styles.mealCountBadge}>
-                        <Text style={styles.mealCountText}>
-                          {dayMeals.length} öğün
+                        <Text
+                          style={[
+                            styles.dayBadgeText,
+                            isOpen && styles.dayBadgeTextActive,
+                          ]}
+                        >
+                          {getDayShort(dateStr)}
                         </Text>
                       </View>
-                    )}
-                    <Ionicons
-                      name={isOpen ? "chevron-up" : "chevron-down"}
-                      size={18}
-                      color={isOpen ? "#34C759" : "#C7C7CC"}
-                    />
-                  </View>
-                </TouchableOpacity>
-
-                {isOpen && (
-                  <View style={styles.dayContent}>
-                    {dayMeals.length === 0 ? (
-                      <Text style={styles.emptyDayText}>
-                        Bu gün için öğün eklenmemiş.
-                      </Text>
-                    ) : (
-                      dayMeals.map((meal) => (
-                        <View key={meal.id} style={styles.mealRow}>
-                          <View style={styles.mealTimeCol}>
-                            <Text style={styles.mealTime}>
-                              {meal.meal_time?.slice(0, 5)}
-                            </Text>
-                            {meal.meal_type && (
-                              <View style={styles.mealTypeBadge}>
-                                <Text style={styles.mealTypeText}>
-                                  {meal.meal_type}
-                                </Text>
-                              </View>
-                            )}
-                          </View>
-                          <View style={styles.mealInfoCol}>
-                            <Text style={styles.mealName}>
-                              {meal.meal_name}
-                            </Text>
-                            <View style={styles.mealMeta}>
-                              {meal.calories && (
-                                <Text style={styles.mealMetaText}>
-                                  🔥 {meal.calories} kcal
-                                </Text>
+                      <View>
+                        <Text
+                          style={[
+                            styles.dayLabel,
+                            isOpen && styles.dayLabelActive,
+                          ]}
+                        >
+                          {getDayFullName(dateStr)}
+                        </Text>
+                        <Text style={styles.dayDate}>
+                          {formatDate(dateStr)}
+                        </Text>
+                      </View>
+                    </View>
+                    <View style={styles.dayHeaderRight}>
+                      {dayMeals.length > 0 && (
+                        <View style={styles.mealCountBadge}>
+                          <Text style={styles.mealCountText}>
+                            {dayMeals.length} öğün
+                          </Text>
+                        </View>
+                      )}
+                      <Ionicons
+                        name={isOpen ? "chevron-up" : "chevron-down"}
+                        size={18}
+                        color={isOpen ? "#34C759" : "#C7C7CC"}
+                      />
+                    </View>
+                  </TouchableOpacity>
+                  {isOpen && (
+                    <View style={styles.dayContent}>
+                      {dayMeals.length === 0 ? (
+                        <Text style={styles.emptyDayText}>
+                          Bu gün için öğün eklenmemiş.
+                        </Text>
+                      ) : (
+                        dayMeals.map((meal) => (
+                          <View key={meal.id} style={styles.mealRow}>
+                            <View style={styles.mealTimeCol}>
+                              <Text style={styles.mealTime}>
+                                {meal.meal_time?.slice(0, 5)}
+                              </Text>
+                              {meal.meal_type && (
+                                <View style={styles.mealTypeBadge}>
+                                  <Text style={styles.mealTypeText}>
+                                    {meal.meal_type}
+                                  </Text>
+                                </View>
                               )}
-                              {meal.portion && (
-                                <Text style={styles.mealMetaText}>
-                                  ⚖️ {meal.portion}
+                            </View>
+                            <View style={styles.mealInfoCol}>
+                              <Text style={styles.mealName}>
+                                {meal.meal_name}
+                              </Text>
+                              <View style={styles.mealMeta}>
+                                {meal.calories && (
+                                  <Text style={styles.mealMetaText}>
+                                    🔥 {meal.calories} kcal
+                                  </Text>
+                                )}
+                                {meal.portion && (
+                                  <Text style={styles.mealMetaText}>
+                                    ⚖️ {meal.portion}
+                                  </Text>
+                                )}
+                              </View>
+                              {meal.notes && (
+                                <Text style={styles.mealNotes}>
+                                  {meal.notes}
                                 </Text>
                               )}
                             </View>
-                            {meal.notes && (
-                              <Text style={styles.mealNotes}>{meal.notes}</Text>
-                            )}
                           </View>
-                        </View>
-                      ))
-                    )}
-                  </View>
-                )}
-              </View>
-            );
-          })}
-        </>
-      ) : (
-        // Program yok
-        <View style={styles.noProgramContainer}>
-          <Ionicons name="calendar-outline" size={64} color="#E5E5EA" />
-          <Text style={styles.noProgramTitle}>Bu Hafta Program Yok</Text>
-          <Text style={styles.noProgramText}>
-            {clientName} için henüz bu haftaya ait bir diyet programı
-            oluşturulmamış.
-          </Text>
+                        ))
+                      )}
+                    </View>
+                  )}
+                </View>
+              );
+            })}
+          </>
+        ) : (
+          <View style={styles.noProgramContainer}>
+            <Ionicons name="calendar-outline" size={64} color="#E5E5EA" />
+            <Text style={styles.noProgramTitle}>Henüz Program Yok</Text>
+            <Text style={styles.noProgramText}>
+              {clientName} için henüz bir diyet programı oluşturulmamış.
+            </Text>
+            <TouchableOpacity
+              style={styles.createProgramBtn}
+              onPress={() =>
+                navigation.navigate("CreateProgram", { clientId, clientName })
+              }
+            >
+              <Ionicons name="add" size={20} color="#FFF" />
+              <Text style={styles.createProgramBtnText}>Program Oluştur</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+        {currentProgram && (
           <TouchableOpacity
-            style={styles.createProgramBtn}
+            style={styles.newProgramBtn}
             onPress={() =>
               navigation.navigate("CreateProgram", { clientId, clientName })
             }
           >
-            <Ionicons name="add" size={20} color="#FFF" />
-            <Text style={styles.createProgramBtnText}>Program Oluştur</Text>
+            <Ionicons name="add-circle-outline" size={18} color="#34C759" />
+            <Text style={styles.newProgramBtnText}>Yeni Program Oluştur</Text>
           </TouchableOpacity>
-        </View>
-      )}
+        )}
+      </ScrollView>
+    );
+  };
 
-      {/* Program varsa altına da buton koy */}
-      {currentProgram && (
-        <TouchableOpacity
-          style={styles.newProgramBtn}
-          onPress={() =>
-            navigation.navigate("CreateProgram", { clientId, clientName })
-          }
-        >
-          <Ionicons name="add-circle-outline" size={18} color="#34C759" />
-          <Text style={styles.newProgramBtnText}>Yeni Program Oluştur</Text>
-        </TouchableOpacity>
-      )}
-    </ScrollView>
-  );
-
-  // ─── GECMİŞ SEKMESI ────────────────────────────────────────
+  // ─── GEÇMİŞ ───────────────────────────────────────────
   const renderHistory = () => (
     <ScrollView
       contentContainerStyle={styles.tabContent}
@@ -434,27 +522,32 @@ const ClientDetail = () => {
               <View style={styles.historyIcon}>
                 <Ionicons name="calendar" size={20} color="#007AFF" />
               </View>
-              <View>
+              <View style={{ flex: 1 }}>
                 <Text style={styles.historyTitle}>{program.title}</Text>
                 <Text style={styles.historyDate}>
-                  {formatDate(program.week_start)}
+                  {formatDate(program.start_date || program.week_start)}
+                  {program.end_date ? ` — ${formatDate(program.end_date)}` : ""}
                 </Text>
               </View>
             </View>
-            <Ionicons name="chevron-forward" size={16} color="#C7C7CC" />
+            <TouchableOpacity
+              onPress={() => handleDeleteProgram(program)}
+              style={styles.historyDeleteBtn}
+            >
+              <Ionicons name="trash-outline" size={18} color="#FF3B30" />
+            </TouchableOpacity>
           </View>
         ))
       )}
     </ScrollView>
   );
 
-  if (loading) {
+  if (loading)
     return (
       <View style={styles.center}>
         <ActivityIndicator size="large" color="#34C759" />
       </View>
     );
-  }
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -468,7 +561,6 @@ const ClientDetail = () => {
         >
           <Ionicons name="chevron-back" size={24} color="#1C1C1E" />
         </TouchableOpacity>
-
         <View style={styles.headerCenter}>
           <View
             style={[
@@ -488,8 +580,10 @@ const ClientDetail = () => {
             </View>
           </View>
         </View>
-
-        <TouchableOpacity style={styles.moreBtn}>
+        <TouchableOpacity
+          style={styles.moreBtn}
+          onPress={() => setMenuVisible(true)}
+        >
           <Ionicons name="ellipsis-horizontal" size={20} color="#1C1C1E" />
         </TouchableOpacity>
       </View>
@@ -515,10 +609,50 @@ const ClientDetail = () => {
         ))}
       </View>
 
-      {/* İÇERİK */}
       {activeTab === 0 && renderProfile()}
       {activeTab === 1 && renderProgram()}
       {activeTab === 2 && renderHistory()}
+
+      {/* ... MENÜ MODAL */}
+      <Modal
+        visible={menuVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setMenuVisible(false)}
+      >
+        <TouchableOpacity
+          style={styles.menuOverlay}
+          activeOpacity={1}
+          onPress={() => setMenuVisible(false)}
+        >
+          <View style={styles.menuBox}>
+            <TouchableOpacity
+              style={styles.menuItem}
+              onPress={() => {
+                setMenuVisible(false);
+                navigation.navigate("CreateProgram", { clientId, clientName });
+              }}
+            >
+              <Ionicons name="add-circle-outline" size={20} color="#34C759" />
+              <Text style={styles.menuItemText}>Yeni Program Oluştur</Text>
+            </TouchableOpacity>
+            <View style={styles.menuDivider} />
+            <TouchableOpacity
+              style={styles.menuItem}
+              onPress={handleRemoveClient}
+            >
+              <Ionicons
+                name="person-remove-outline"
+                size={20}
+                color="#FF3B30"
+              />
+              <Text style={[styles.menuItemText, { color: "#FF3B30" }]}>
+                Danışanı Kaldır
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
     </SafeAreaView>
   );
 };
@@ -531,232 +665,6 @@ const StatCard = ({ icon, label, value, color }) => (
   </View>
 );
 
-const getAvatarColor = (name) => {
-  const colors = [
-    "#34C759",
-    "#007AFF",
-    "#FF9500",
-    "#AF52DE",
-    "#FF2D55",
-    "#5AC8FA",
-  ];
-  if (!name) return colors[0];
-  return colors[name.charCodeAt(0) % colors.length];
-};
-const DAY_SHORTS = ["Paz", "Pzt", "Sal", "Çar", "Per", "Cum", "Cmt"];
-
-const getDayShort = (dateStr) => {
-  const d = new Date(dateStr + "T12:00:00");
-  return DAY_SHORTS[d.getDay()];
-};
-
-const getDayFullName = (dateStr) => {
-  if (!dateStr) return "";
-  const days = [
-    "Pazar",
-    "Pazartesi",
-    "Salı",
-    "Çarşamba",
-    "Perşembe",
-    "Cuma",
-    "Cumartesi",
-  ];
-  return days[new Date(dateStr + "T12:00:00").getDay()];
-};
-
-const getProgramDays = (startStr, endStr) => {
-  if (!startStr || !endStr) return [];
-  const days = [];
-  const current = new Date(startStr + "T12:00:00");
-  const end = new Date(endStr + "T12:00:00");
-  while (current <= end) {
-    const y = current.getFullYear();
-    const m = String(current.getMonth() + 1).padStart(2, "0");
-    const d = String(current.getDate()).padStart(2, "0");
-    days.push(`${y}-${m}-${d}`);
-    current.setDate(current.getDate() + 1);
-  }
-  return days;
-};
-const renderProgram = () => {
-  const programDays = currentProgram
-    ? getProgramDays(
-        currentProgram.start_date || currentProgram.week_start,
-        currentProgram.end_date || currentProgram.week_start,
-      )
-    : [];
-
-  return (
-    <ScrollView
-      contentContainerStyle={styles.tabContent}
-      refreshControl={
-        <RefreshControl
-          refreshing={refreshing}
-          onRefresh={onRefresh}
-          tintColor="#34C759"
-        />
-      }
-      showsVerticalScrollIndicator={false}
-    >
-      {currentProgram ? (
-        <>
-          {/* Program başlık kartı */}
-          <View style={styles.programHeaderCard}>
-            <View>
-              <Text style={styles.programTitle}>{currentProgram.title}</Text>
-              <Text style={styles.programWeek}>
-                {formatDate(
-                  currentProgram.start_date || currentProgram.week_start,
-                )}
-                {currentProgram.end_date
-                  ? ` — ${formatDate(currentProgram.end_date)}`
-                  : ""}
-              </Text>
-            </View>
-            <View style={styles.programBadge}>
-              <Text style={styles.programBadgeText}>Aktif Program</Text>
-            </View>
-          </View>
-
-          {/* Günler — meal_date bazlı */}
-          {programDays.map((dateStr) => {
-            const dayMeals = currentMeals.filter(
-              (m) => m.meal_date === dateStr,
-            );
-            const isOpen = openDay === dateStr;
-
-            return (
-              <View key={dateStr} style={styles.dayAccordion}>
-                <TouchableOpacity
-                  style={[styles.dayHeader, isOpen && styles.dayHeaderOpen]}
-                  onPress={() => setOpenDay(isOpen ? null : dateStr)}
-                  activeOpacity={0.7}
-                >
-                  <View style={styles.dayHeaderLeft}>
-                    <View
-                      style={[styles.dayBadge, isOpen && styles.dayBadgeActive]}
-                    >
-                      <Text
-                        style={[
-                          styles.dayBadgeText,
-                          isOpen && styles.dayBadgeTextActive,
-                        ]}
-                      >
-                        {getDayShort(dateStr)}
-                      </Text>
-                    </View>
-                    <View>
-                      <Text
-                        style={[
-                          styles.dayLabel,
-                          isOpen && styles.dayLabelActive,
-                        ]}
-                      >
-                        {getDayFullName(dateStr)}
-                      </Text>
-                      <Text style={styles.dayDate}>{formatDate(dateStr)}</Text>
-                    </View>
-                  </View>
-                  <View style={styles.dayHeaderRight}>
-                    {dayMeals.length > 0 && (
-                      <View style={styles.mealCountBadge}>
-                        <Text style={styles.mealCountText}>
-                          {dayMeals.length} öğün
-                        </Text>
-                      </View>
-                    )}
-                    <Ionicons
-                      name={isOpen ? "chevron-up" : "chevron-down"}
-                      size={18}
-                      color={isOpen ? "#34C759" : "#C7C7CC"}
-                    />
-                  </View>
-                </TouchableOpacity>
-
-                {isOpen && (
-                  <View style={styles.dayContent}>
-                    {dayMeals.length === 0 ? (
-                      <Text style={styles.emptyDayText}>
-                        Bu gün için öğün eklenmemiş.
-                      </Text>
-                    ) : (
-                      dayMeals.map((meal) => (
-                        <View key={meal.id} style={styles.mealRow}>
-                          <View style={styles.mealTimeCol}>
-                            <Text style={styles.mealTime}>
-                              {meal.meal_time?.slice(0, 5)}
-                            </Text>
-                            {meal.meal_type && (
-                              <View style={styles.mealTypeBadge}>
-                                <Text style={styles.mealTypeText}>
-                                  {meal.meal_type}
-                                </Text>
-                              </View>
-                            )}
-                          </View>
-                          <View style={styles.mealInfoCol}>
-                            <Text style={styles.mealName}>
-                              {meal.meal_name}
-                            </Text>
-                            <View style={styles.mealMeta}>
-                              {meal.calories && (
-                                <Text style={styles.mealMetaText}>
-                                  🔥 {meal.calories} kcal
-                                </Text>
-                              )}
-                              {meal.portion && (
-                                <Text style={styles.mealMetaText}>
-                                  ⚖️ {meal.portion}
-                                </Text>
-                              )}
-                            </View>
-                            {meal.notes && (
-                              <Text style={styles.mealNotes}>{meal.notes}</Text>
-                            )}
-                          </View>
-                        </View>
-                      ))
-                    )}
-                  </View>
-                )}
-              </View>
-            );
-          })}
-        </>
-      ) : (
-        <View style={styles.noProgramContainer}>
-          <Ionicons name="calendar-outline" size={64} color="#E5E5EA" />
-          <Text style={styles.noProgramTitle}>Henüz Program Yok</Text>
-          <Text style={styles.noProgramText}>
-            {clientName} için henüz bir diyet programı oluşturulmamış.
-          </Text>
-          <TouchableOpacity
-            style={styles.createProgramBtn}
-            onPress={() =>
-              navigation.navigate("CreateProgram", { clientId, clientName })
-            }
-          >
-            <Ionicons name="add" size={20} color="#FFF" />
-            <Text style={styles.createProgramBtnText}>Program Oluştur</Text>
-          </TouchableOpacity>
-        </View>
-      )}
-
-      {currentProgram && (
-        <TouchableOpacity
-          style={styles.newProgramBtn}
-          onPress={() =>
-            navigation.navigate("CreateProgram", { clientId, clientName })
-          }
-        >
-          <Ionicons name="add-circle-outline" size={18} color="#34C759" />
-          <Text style={styles.newProgramBtnText}>Yeni Program Oluştur</Text>
-        </TouchableOpacity>
-      )}
-    </ScrollView>
-  );
-};
-
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
@@ -764,7 +672,6 @@ const styles = StyleSheet.create({
     paddingTop: Platform.OS === "android" ? StatusBar.currentHeight : 0,
   },
   center: { flex: 1, justifyContent: "center", alignItems: "center" },
-
   header: {
     flexDirection: "row",
     alignItems: "center",
@@ -819,8 +726,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
-
-  // Tab bar
   tabBar: {
     flexDirection: "row",
     backgroundColor: "#FFF",
@@ -845,10 +750,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#34C759",
     borderRadius: 1,
   },
-
   tabContent: { padding: 16, paddingBottom: 40 },
-
-  // Stats grid
   statsGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -875,8 +777,6 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   statLabel: { fontSize: 12, color: "#8E8E93" },
-
-  // Kartlar
   card: {
     backgroundColor: "#FFF",
     borderRadius: 16,
@@ -903,8 +803,6 @@ const styles = StyleSheet.create({
     color: "#C7C7CC",
     marginTop: 8,
   },
-
-  // Progress
   progressBarBg: {
     height: 8,
     backgroundColor: "#F2F2F7",
@@ -918,8 +816,6 @@ const styles = StyleSheet.create({
   },
   progressText: { fontSize: 13, color: "#8E8E93", marginTop: 6 },
   emptyText: { fontSize: 13, color: "#C7C7CC" },
-
-  // Program
   programHeaderCard: {
     backgroundColor: "#FFF",
     borderRadius: 16,
@@ -934,6 +830,7 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.04,
     shadowRadius: 4,
   },
+  programHeaderRight: { flexDirection: "row", alignItems: "center", gap: 8 },
   programTitle: { fontSize: 16, fontWeight: "700", color: "#1C1C1E" },
   programWeek: { fontSize: 13, color: "#8E8E93", marginTop: 2 },
   programBadge: {
@@ -943,8 +840,14 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   programBadgeText: { fontSize: 12, color: "#34C759", fontWeight: "700" },
-
-  // Accordion
+  deleteProgramBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    backgroundColor: "#FFF0EE",
+    justifyContent: "center",
+    alignItems: "center",
+  },
   dayAccordion: {
     backgroundColor: "#FFF",
     borderRadius: 16,
@@ -977,6 +880,7 @@ const styles = StyleSheet.create({
   dayBadgeTextActive: { color: "#34C759" },
   dayLabel: { fontSize: 16, fontWeight: "600", color: "#1C1C1E" },
   dayLabelActive: { color: "#34C759" },
+  dayDate: { fontSize: 12, color: "#8E8E93", marginTop: 1 },
   dayHeaderRight: { flexDirection: "row", alignItems: "center", gap: 8 },
   mealCountBadge: {
     backgroundColor: "#E5F9ED",
@@ -992,8 +896,6 @@ const styles = StyleSheet.create({
     textAlign: "center",
     paddingVertical: 12,
   },
-
-  // Öğün satırı
   mealRow: {
     flexDirection: "row",
     gap: 12,
@@ -1022,8 +924,6 @@ const styles = StyleSheet.create({
     marginTop: 4,
     fontStyle: "italic",
   },
-
-  // Program yok
   noProgramContainer: {
     alignItems: "center",
     paddingVertical: 40,
@@ -1066,8 +966,6 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   newProgramBtnText: { fontSize: 14, color: "#34C759", fontWeight: "700" },
-
-  // Geçmiş
   historyCard: {
     flexDirection: "row",
     alignItems: "center",
@@ -1082,7 +980,12 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.04,
     shadowRadius: 4,
   },
-  historyCardLeft: { flexDirection: "row", alignItems: "center", gap: 12 },
+  historyCardLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    flex: 1,
+  },
   historyIcon: {
     width: 40,
     height: 40,
@@ -1093,6 +996,44 @@ const styles = StyleSheet.create({
   },
   historyTitle: { fontSize: 15, fontWeight: "600", color: "#1C1C1E" },
   historyDate: { fontSize: 12, color: "#8E8E93", marginTop: 2 },
+  historyDeleteBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    backgroundColor: "#FFF0EE",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+
+  // ... menü
+  menuOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.3)",
+    justifyContent: "flex-start",
+    alignItems: "flex-end",
+    paddingTop: 100,
+    paddingRight: 16,
+  },
+  menuBox: {
+    backgroundColor: "#FFF",
+    borderRadius: 16,
+    paddingVertical: 8,
+    minWidth: 220,
+    elevation: 8,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+  },
+  menuItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+  },
+  menuItemText: { fontSize: 15, fontWeight: "600", color: "#1C1C1E" },
+  menuDivider: { height: 1, backgroundColor: "#F2F2F7", marginHorizontal: 12 },
 });
 
 export default ClientDetail;

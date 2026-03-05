@@ -19,6 +19,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Calendar, LocaleConfig } from "react-native-calendars";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { supabase } from "../../../supabase";
+import { DietitianTabBar } from "../../components";
 
 LocaleConfig.locales["tr"] = {
   monthNames: [
@@ -145,7 +146,6 @@ const DietitianCalendar = () => {
   const [pickerDate, setPickerDate] = useState(new Date());
   const [pickerTime, setPickerTime] = useState(new Date());
 
-  // selectedDate ref — closure sorununu çözer
   const selectedDateRef = useRef(todayStr);
 
   useEffect(() => {
@@ -177,7 +177,6 @@ const DietitianCalendar = () => {
     if (data) setClients(data);
   };
 
-  // Ref ile closure sorunu çözüldü
   const fetchAppointments = async () => {
     const {
       data: { user },
@@ -196,7 +195,6 @@ const DietitianCalendar = () => {
 
     if (data) {
       setAppointments(data);
-      // ref üzerinden güncel selectedDate'i kullan
       buildMarkedDates(data, selectedDateRef.current);
     }
   };
@@ -228,8 +226,7 @@ const DietitianCalendar = () => {
     (a) => a.appointment_date === selectedDate,
   );
 
-  // ─── FORM ────────────────────────────────────────────────
-
+  // FORM
   const openCreate = () => {
     setEditingId(null);
     const f = { ...emptyForm(), appointment_date: selectedDate };
@@ -443,15 +440,6 @@ const DietitianCalendar = () => {
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <StatusBar barStyle="dark-content" />
-
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Takvim</Text>
-        <TouchableOpacity style={styles.addBtn} onPress={openCreate}>
-          <Ionicons name="add" size={22} color="#FFF" />
-        </TouchableOpacity>
-      </View>
-
       <ScrollView
         showsVerticalScrollIndicator={false}
         refreshControl={
@@ -462,6 +450,15 @@ const DietitianCalendar = () => {
           />
         }
       >
+        <StatusBar barStyle="dark-content" />
+
+        <View style={styles.header}>
+          <Text style={styles.headerTitle}>Takvim</Text>
+          <TouchableOpacity style={styles.addBtn} onPress={openCreate}>
+            <Ionicons name="add" size={22} color="#FFF" />
+          </TouchableOpacity>
+        </View>
+
         <View style={styles.calendarWrapper}>
           <Calendar
             onDayPress={handleDayPress}
@@ -540,7 +537,7 @@ const DietitianCalendar = () => {
         )}
         <View style={{ height: 40 }} />
       </ScrollView>
-
+      <DietitianTabBar />
       {/* RANDEVU MODAL */}
       <Modal
         visible={modalVisible}
