@@ -13,13 +13,22 @@ import {
   TextInput,
   RefreshControl,
   ScrollView,
+  KeyboardAvoidingView,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { supabase } from "../../../supabase";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useNavigation } from "@react-navigation/native";
+import { useNavigation, useRoute } from "@react-navigation/native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { DietitianTabBar } from "../../components";
+import {
+  getUnreadCount,
+  getNotifications,
+  markAsRead,
+  markAllAsRead,
+  checkProgramExpirations,
+  loadSettings,
+} from "../../services/notificationService";
 
 const toLocalDateStr = (date = new Date()) => {
   const y = date.getFullYear();
@@ -27,7 +36,6 @@ const toLocalDateStr = (date = new Date()) => {
   const d = String(date.getDate()).padStart(2, "0");
   return `${y}-${m}-${d}`;
 };
-
 const todayStr = toLocalDateStr();
 
 const formatDateTR = (dateStr) => {
@@ -38,6 +46,56 @@ const formatDateTR = (dateStr) => {
   });
 };
 
+const notifIcon = (type) => {
+  switch (type) {
+    case "new_client":
+      return "person-add-outline";
+    case "client_left":
+      return "person-remove-outline";
+    case "program_ending":
+      return "warning-outline";
+    case "program_expired":
+      return "alert-circle-outline";
+    case "appointment":
+      return "calendar-outline";
+    default:
+      return "notifications-outline";
+  }
+};
+
+const notifIconColor = (type) => {
+  switch (type) {
+    case "new_client":
+      return "#34C759";
+    case "client_left":
+      return "#FF3B30";
+    case "program_ending":
+      return "#FF9500";
+    case "program_expired":
+      return "#FF3B30";
+    case "appointment":
+      return "#007AFF";
+    default:
+      return "#8E8E93";
+  }
+};
+
+const notifIconBg = (type) => notifIconColor(type) + "18";
+
+const formatNotifTime = (iso) => {
+  const date = new Date(iso);
+  const now = new Date();
+  const diffMs = now - date;
+  const diffMin = Math.floor(diffMs / 60000);
+  if (diffMin < 1) return "Az önce";
+  if (diffMin < 60) return `${diffMin} dk önce`;
+  const diffH = Math.floor(diffMin / 60);
+  if (diffH < 24) return `${diffH} saat önce`;
+  const diffD = Math.floor(diffH / 24);
+  if (diffD < 7) return `${diffD} gün önce`;
+  return date.toLocaleDateString("tr-TR");
+};
+
 const HomeDyt = () => {
   const [clients, setClients] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -45,28 +103,86 @@ const HomeDyt = () => {
   const [dietitianId, setDietitianId] = useState(null);
   const [dietitianName, setDietitianName] = useState("");
   const [stats, setStats] = useState({ totalClients: 0, thisWeek: 0 });
+  const [modalVisible, setModalVisible] = useState(false);
+  const [clientEmail, setClientEmail] = useState("");
+  const [sendingInvite, setSendingInvite] = useState(false);
   const [clientsWithProgram, setClientsWithProgram] = useState(new Set());
-
-  // Uyarı sistemi
   const [warnings, setWarnings] = useState([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [notifPanelVisible, setNotifPanelVisible] = useState(false);
+  const [notifications, setNotifications] = useState([]);
+  const [loadingNotifs, setLoadingNotifs] = useState(false);
   const [dismissedWarnings, setDismissedWarnings] = useState(new Set());
 
   const navigation = useNavigation();
+  const route = useRoute();
+
+  useEffect(() => {
+    if (route.params?.openModal) {
+      setModalVisible(true);
+      navigation.setParams({ openModal: false });
+    }
+  }, [route.params?.openModal]);
 
   useEffect(() => {
     loadDismissed();
     fetchUserAndData();
+    loadUnreadCount();
+    runExpirationCheck();
   }, []);
+
+  const loadUnreadCount = async () => {
+    try {
+      const count = await getUnreadCount();
+      setUnreadCount(count);
+    } catch (e) {}
+  };
+
+  const runExpirationCheck = async () => {
+    try {
+      const settings = await loadSettings();
+      await checkProgramExpirations(settings);
+      await loadUnreadCount();
+    } catch (e) {}
+  };
+
+  const openNotifPanel = async () => {
+    setNotifPanelVisible(true);
+    setLoadingNotifs(true);
+    try {
+      const data = await getNotifications();
+      setNotifications(data || []);
+    } catch (e) {
+      setNotifications([]);
+    } finally {
+      setLoadingNotifs(false);
+    }
+  };
+
+  const handleMarkAllRead = async () => {
+    try {
+      await markAllAsRead();
+      setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })));
+      setUnreadCount(0);
+    } catch (e) {}
+  };
+
+  const handleMarkRead = async (id) => {
+    try {
+      await markAsRead(id);
+      setNotifications((prev) =>
+        prev.map((n) => (n.id === id ? { ...n, is_read: true } : n)),
+      );
+      setUnreadCount((c) => Math.max(0, c - 1));
+    } catch (e) {}
+  };
 
   const loadDismissed = async () => {
     try {
       const raw = await AsyncStorage.getItem("dismissed_warnings");
       if (raw) {
         const parsed = JSON.parse(raw);
-        // Sadece bugünün tarihindeki dismiss'leri tut (her gün sıfırlanır)
-        const todayKey = `dismissed_${todayStr}`;
-        const todayDismissed = parsed[todayKey] || [];
-        setDismissedWarnings(new Set(todayDismissed));
+        setDismissedWarnings(new Set(parsed[`dismissed_${todayStr}`] || []));
       }
     } catch (e) {}
   };
@@ -75,10 +191,9 @@ const HomeDyt = () => {
     const updated = new Set([...dismissedWarnings, warningId]);
     setDismissedWarnings(updated);
     try {
-      const todayKey = `dismissed_${todayStr}`;
       const raw = await AsyncStorage.getItem("dismissed_warnings");
       const parsed = raw ? JSON.parse(raw) : {};
-      parsed[todayKey] = [...updated];
+      parsed[`dismissed_${todayStr}`] = [...updated];
       await AsyncStorage.setItem("dismissed_warnings", JSON.stringify(parsed));
     } catch (e) {}
   };
@@ -90,14 +205,12 @@ const HomeDyt = () => {
       } = await supabase.auth.getUser();
       if (!user) return;
       setDietitianId(user.id);
-
       const { data: profile } = await supabase
         .from("dietitian_profiles")
         .select("full_name")
         .eq("id", user.id)
         .single();
       if (profile) setDietitianName(profile.full_name);
-
       await fetchClients(user.id);
     } catch (error) {
       console.error("Yükleme hatası:", error.message);
@@ -119,15 +232,13 @@ const HomeDyt = () => {
 
     const weekAgo = new Date();
     weekAgo.setDate(weekAgo.getDate() - 7);
-    const thisWeekCount = data.filter(
-      (c) => new Date(c.created_at) > weekAgo,
-    ).length;
-    setStats({ totalClients: data.length, thisWeek: thisWeekCount });
+    setStats({
+      totalClients: data.length,
+      thisWeek: data.filter((c) => new Date(c.created_at) > weekAgo).length,
+    });
 
     if (data.length > 0) {
       const clientIds = data.map((c) => c.id);
-
-      // Program badge
       const { data: programs } = await supabase
         .from("diet_programs")
         .select("client_id")
@@ -136,7 +247,6 @@ const HomeDyt = () => {
       if (programs)
         setClientsWithProgram(new Set(programs.map((p) => p.client_id)));
 
-      // Bitiş uyarıları için en son programları çek
       const { data: latestPrograms } = await supabase
         .from("diet_programs")
         .select("client_id, end_date, title")
@@ -146,31 +256,28 @@ const HomeDyt = () => {
         .order("end_date", { ascending: false });
 
       if (latestPrograms) {
-        // Her danışan için sadece en son programı al
         const latestByClient = {};
         latestPrograms.forEach((p) => {
           if (!latestByClient[p.client_id]) latestByClient[p.client_id] = p;
         });
-
         const newWarnings = [];
         data.forEach((client) => {
           const prog = latestByClient[client.id];
           if (!prog) return;
-          const endDate = prog.end_date;
-          if (endDate === todayStr) {
+          if (prog.end_date === todayStr) {
             newWarnings.push({
-              id: `${client.id}_${endDate}`,
+              id: `${client.id}_${prog.end_date}`,
               clientId: client.id,
               clientName: client.full_name,
-              endDate,
+              endDate: prog.end_date,
               type: "today",
             });
-          } else if (endDate < todayStr) {
+          } else if (prog.end_date < todayStr) {
             newWarnings.push({
-              id: `${client.id}_${endDate}`,
+              id: `${client.id}_${prog.end_date}`,
               clientId: client.id,
               clientName: client.full_name,
-              endDate,
+              endDate: prog.end_date,
               type: "expired",
             });
           }
@@ -200,6 +307,56 @@ const HomeDyt = () => {
     ]);
   };
 
+  const addClient = async () => {
+    if (!clientEmail.trim()) {
+      Alert.alert("Hata", "Lütfen bir e-posta adresi girin.");
+      return;
+    }
+    setSendingInvite(true);
+    try {
+      const { data: userData, error: userError } = await supabase
+        .from("client_profiles")
+        .select("id, full_name, dietitian_id")
+        .eq("email", clientEmail.toLowerCase().trim())
+        .single();
+      if (userError || !userData) {
+        Alert.alert(
+          "Danışan Bulunamadı",
+          "Bu e-postaya sahip bir danışan bulunamadı.",
+        );
+        return;
+      }
+      if (userData.dietitian_id === dietitianId) {
+        Alert.alert("Bilgi", "Bu danışan zaten listenizde bulunuyor.");
+        return;
+      }
+
+      const approvalUrl = `https://idyllic-cassata-8758dd.netlify.app/?dietitianId=${dietitianId}&dietitianName=${encodeURIComponent(dietitianName)}&targetEmail=${encodeURIComponent(clientEmail.toLowerCase().trim())}`;
+      const { error: funcError } = await supabase.functions.invoke(
+        "send-invite-email",
+        {
+          body: {
+            clientEmail: clientEmail.toLowerCase().trim(),
+            clientName: userData.full_name,
+            dietitianName,
+            approvalUrl,
+          },
+        },
+      );
+      if (funcError) throw funcError;
+      Alert.alert(
+        "Davet Gönderildi ✅",
+        `${userData.full_name} adlı danışana davet e-postası gönderildi.`,
+      );
+      setModalVisible(false);
+      setClientEmail("");
+    } catch (error) {
+      Alert.alert("Hata", "E-posta gönderimi sırasında bir sorun oluştu.");
+    } finally {
+      setSendingInvite(false);
+    }
+  };
+
   const getInitials = (name) => name?.trim().charAt(0).toUpperCase() || "?";
   const getAvatarColor = (name) => {
     const colors = [
@@ -214,72 +371,7 @@ const HomeDyt = () => {
     return colors[name.charCodeAt(0) % colors.length];
   };
 
-  // Görünür uyarılar (dismiss edilmemişler)
   const visibleWarnings = warnings.filter((w) => !dismissedWarnings.has(w.id));
-
-  const renderWarningBanner = () => {
-    if (visibleWarnings.length === 0) return null;
-    return (
-      <View style={styles.warningContainer}>
-        {visibleWarnings.map((w) => (
-          <View
-            key={w.id}
-            style={[
-              styles.warningBanner,
-              w.type === "expired"
-                ? styles.warningExpired
-                : styles.warningToday,
-            ]}
-          >
-            <View style={styles.warningIcon}>
-              <Ionicons
-                name={w.type === "expired" ? "alert-circle" : "time"}
-                size={20}
-                color={w.type === "expired" ? "#FF3B30" : "#FF9500"}
-              />
-            </View>
-            <View style={styles.warningBody}>
-              <Text
-                style={[
-                  styles.warningTitle,
-                  { color: w.type === "expired" ? "#FF3B30" : "#FF9500" },
-                ]}
-              >
-                {w.type === "expired"
-                  ? "⚠️ Program Süresi Doldu"
-                  : "📅 Program Bugün Bitiyor"}
-              </Text>
-              <Text style={styles.warningText}>
-                {w.clientName} —{" "}
-                {w.type === "expired"
-                  ? `${formatDateTR(w.endDate)} tarihinde bitti`
-                  : "Bugün son gün, yeni program oluşturun"}
-              </Text>
-            </View>
-            <View style={styles.warningActions}>
-              <TouchableOpacity
-                style={styles.warningNewBtn}
-                onPress={() =>
-                  navigation.navigate("CreateProgram", {
-                    clientId: w.clientId,
-                    clientName: w.clientName,
-                  })
-                }
-              >
-                <Text style={styles.warningNewBtnText}>Yenile</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() => dismissWarning(w.id)}
-                style={styles.warningDismiss}
-              >
-                <Ionicons name="close" size={16} color="#8E8E93" />
-              </TouchableOpacity>
-            </View>
-          </View>
-        ))}
-      </View>
-    );
-  };
 
   const renderClientItem = ({ item }) => {
     const hasProgram = clientsWithProgram.has(item.id);
@@ -374,7 +466,7 @@ const HomeDyt = () => {
         <View style={styles.headerTop}>
           <View style={styles.profileRow}>
             <View style={styles.adminAvatar}>
-              <Ionicons name="person" size={20} color="#8E8E93" />
+              <Ionicons name="person" size={18} color="#8E8E93" />
             </View>
             <View>
               <Text style={styles.welcomeText}>Merhaba,</Text>
@@ -384,19 +476,28 @@ const HomeDyt = () => {
             </View>
           </View>
           <View style={{ flexDirection: "row", gap: 8 }}>
-            <TouchableOpacity style={styles.notificationBtn}>
+            <TouchableOpacity
+              style={styles.notificationBtn}
+              onPress={openNotifPanel}
+            >
               <Ionicons
                 name="notifications-outline"
-                size={24}
+                size={22}
                 color="#1C1C1E"
               />
-              {visibleWarnings.length > 0 && <View style={styles.badge} />}
+              {unreadCount > 0 && (
+                <View style={styles.badge}>
+                  <Text style={styles.badgeText}>
+                    {unreadCount > 9 ? "9+" : unreadCount}
+                  </Text>
+                </View>
+              )}
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.notificationBtn}
               onPress={handleLogout}
             >
-              <Ionicons name="log-out-outline" size={24} color="#FF3B30" />
+              <Ionicons name="log-out-outline" size={22} color="#FF3B30" />
             </TouchableOpacity>
           </View>
         </View>
@@ -444,19 +545,65 @@ const HomeDyt = () => {
         </View>
       </View>
 
-      {/* UYARI BANNER'LARI */}
+      {/* UYARILAR */}
       {visibleWarnings.length > 0 && (
-        <ScrollView
-          horizontal={false}
-          showsVerticalScrollIndicator={false}
-          style={styles.warningScrollArea}
-          nestedScrollEnabled
-        >
-          {renderWarningBanner()}
-        </ScrollView>
+        <View style={styles.warningContainer}>
+          {visibleWarnings.map((w) => (
+            <View
+              key={w.id}
+              style={[
+                styles.warningBanner,
+                w.type === "expired"
+                  ? styles.warningExpired
+                  : styles.warningToday,
+              ]}
+            >
+              <Ionicons
+                name={w.type === "expired" ? "alert-circle" : "time"}
+                size={18}
+                color={w.type === "expired" ? "#FF3B30" : "#FF9500"}
+              />
+              <View style={styles.warningBody}>
+                <Text
+                  style={[
+                    styles.warningTitle,
+                    { color: w.type === "expired" ? "#FF3B30" : "#FF9500" },
+                  ]}
+                >
+                  {w.type === "expired"
+                    ? "⚠️ Program Süresi Doldu"
+                    : "📅 Program Bugün Bitiyor"}
+                </Text>
+                <Text style={styles.warningText}>
+                  {w.clientName} —{" "}
+                  {w.type === "expired"
+                    ? `${formatDateTR(w.endDate)} tarihinde bitti`
+                    : "Bugün son gün"}
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={styles.warningNewBtn}
+                onPress={() =>
+                  navigation.navigate("CreateProgram", {
+                    clientId: w.clientId,
+                    clientName: w.clientName,
+                  })
+                }
+              >
+                <Text style={styles.warningNewBtnText}>Yenile</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => dismissWarning(w.id)}
+                style={{ padding: 4 }}
+              >
+                <Ionicons name="close" size={16} color="#8E8E93" />
+              </TouchableOpacity>
+            </View>
+          ))}
+        </View>
       )}
 
-      {/* DANİŞAN LİSTESİ */}
+      {/* LİSTE */}
       <FlatList
         data={clients}
         keyExtractor={(item) => item.id.toString()}
@@ -480,7 +627,166 @@ const HomeDyt = () => {
           </View>
         }
       />
-      <DietitianTabBar />
+
+      <DietitianTabBar onAddPress={() => setModalVisible(true)} />
+
+      {/* BİLDİRİM PANELİ */}
+      <Modal
+        visible={notifPanelVisible}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setNotifPanelVisible(false)}
+      >
+        <View style={styles.notifOverlay}>
+          <TouchableOpacity
+            style={{ flex: 1 }}
+            onPress={() => setNotifPanelVisible(false)}
+          />
+          <View style={styles.notifPanel}>
+            <View style={styles.notifPanelHeader}>
+              <Text style={styles.notifPanelTitle}>Bildirimler</Text>
+              <View
+                style={{ flexDirection: "row", gap: 12, alignItems: "center" }}
+              >
+                {notifications.some((n) => !n.is_read) && (
+                  <TouchableOpacity onPress={handleMarkAllRead}>
+                    <Text style={styles.markAllText}>Tümünü Oku</Text>
+                  </TouchableOpacity>
+                )}
+                <TouchableOpacity onPress={() => setNotifPanelVisible(false)}>
+                  <Ionicons name="close" size={24} color="#8E8E93" />
+                </TouchableOpacity>
+              </View>
+            </View>
+            {loadingNotifs ? (
+              <View style={styles.notifLoading}>
+                <ActivityIndicator size="large" color="#34C759" />
+              </View>
+            ) : notifications.length === 0 ? (
+              <View style={styles.notifEmpty}>
+                <Ionicons
+                  name="notifications-off-outline"
+                  size={48}
+                  color="#E5E5EA"
+                />
+                <Text style={styles.notifEmptyText}>Henüz bildirim yok</Text>
+              </View>
+            ) : (
+              <FlatList
+                data={notifications}
+                keyExtractor={(item) => item.id}
+                showsVerticalScrollIndicator={false}
+                contentContainerStyle={{ paddingBottom: 20 }}
+                renderItem={({ item }) => (
+                  <TouchableOpacity
+                    style={[
+                      styles.notifItem,
+                      !item.is_read && styles.notifItemUnread,
+                    ]}
+                    onPress={() => handleMarkRead(item.id)}
+                    activeOpacity={0.7}
+                  >
+                    <View
+                      style={[
+                        styles.notifTypeIcon,
+                        { backgroundColor: notifIconBg(item.type) },
+                      ]}
+                    >
+                      <Ionicons
+                        name={notifIcon(item.type)}
+                        size={16}
+                        color={notifIconColor(item.type)}
+                      />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.notifItemTitle}>{item.title}</Text>
+                      <Text style={styles.notifItemBody}>{item.body}</Text>
+                      <Text style={styles.notifItemTime}>
+                        {formatNotifTime(item.created_at)}
+                      </Text>
+                    </View>
+                    {!item.is_read && <View style={styles.notifDot} />}
+                  </TouchableOpacity>
+                )}
+              />
+            )}
+          </View>
+        </View>
+      </Modal>
+
+      {/* DANİŞAN EKLE MODAL */}
+      <Modal
+        animationType="slide"
+        transparent
+        visible={modalVisible}
+        onRequestClose={() => setModalVisible(false)}
+      >
+        <KeyboardAvoidingView
+          style={styles.modalOverlay}
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+        >
+          <TouchableOpacity
+            style={{ flex: 1 }}
+            activeOpacity={1}
+            onPress={() => {
+              setModalVisible(false);
+              setClientEmail("");
+            }}
+          />
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Yeni Danışan Ekle</Text>
+              <TouchableOpacity
+                onPress={() => {
+                  setModalVisible(false);
+                  setClientEmail("");
+                }}
+              >
+                <Ionicons name="close" size={24} color="#8E8E93" />
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.modalSubtitle}>
+              Danışanın e-posta adresini girin. Uygulamaya kayıtlı olmaları
+              gerekiyor.
+            </Text>
+            <TextInput
+              style={styles.modalInput}
+              placeholder="ornek@email.com"
+              value={clientEmail}
+              onChangeText={setClientEmail}
+              autoCapitalize="none"
+              keyboardType="email-address"
+              autoFocus
+            />
+            <View style={styles.modalButtons}>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.cancelButton]}
+                onPress={() => {
+                  setModalVisible(false);
+                  setClientEmail("");
+                }}
+              >
+                <Text style={styles.cancelButtonText}>Vazgeç</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.modalButton,
+                  styles.confirmButton,
+                  sendingInvite && { opacity: 0.7 },
+                ]}
+                onPress={addClient}
+                disabled={sendingInvite}
+              >
+                {sendingInvite ? (
+                  <ActivityIndicator size="small" color="#FFF" />
+                ) : (
+                  <Text style={styles.confirmButtonText}>Davet Gönder</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </SafeAreaView>
   );
 };
@@ -493,12 +799,12 @@ const styles = StyleSheet.create({
   },
   center: { flex: 1, justifyContent: "center", alignItems: "center" },
   header: {
-    paddingHorizontal: 20,
-    paddingTop: 15,
-    paddingBottom: 20,
+    paddingHorizontal: 16,
+    paddingTop: 10,
+    paddingBottom: 12,
     backgroundColor: "#FFF",
-    borderBottomLeftRadius: 30,
-    borderBottomRightRadius: 30,
+    borderBottomLeftRadius: 20,
+    borderBottomRightRadius: 20,
     elevation: 3,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
@@ -509,77 +815,83 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 20,
+    marginBottom: 10,
   },
   profileRow: { flexDirection: "row", alignItems: "center" },
   adminAvatar: {
-    width: 45,
-    height: 45,
-    borderRadius: 22.5,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     backgroundColor: "#F2F2F7",
     justifyContent: "center",
     alignItems: "center",
-    marginRight: 12,
+    marginRight: 10,
   },
-  welcomeText: { fontSize: 13, color: "#8E8E93" },
-  portalTitle: { fontSize: 20, fontWeight: "700", color: "#1C1C1E" },
+  welcomeText: { fontSize: 12, color: "#8E8E93" },
+  portalTitle: { fontSize: 16, fontWeight: "700", color: "#1C1C1E" },
   notificationBtn: {
-    padding: 8,
+    padding: 7,
     backgroundColor: "#F2F2F7",
-    borderRadius: 12,
+    borderRadius: 10,
     position: "relative",
   },
   badge: {
     position: "absolute",
-    top: 8,
-    right: 10,
-    width: 10,
-    height: 10,
-    borderRadius: 5,
+    top: 3,
+    right: 3,
+    minWidth: 15,
+    height: 15,
+    borderRadius: 8,
     backgroundColor: "#FF3B30",
-    borderWidth: 2,
+    borderWidth: 1.5,
     borderColor: "#FFF",
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 2,
   },
-  statsContainer: { flexDirection: "row", justifyContent: "space-between" },
+  badgeText: { fontSize: 8, color: "#FFF", fontWeight: "800" },
+  statsContainer: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    gap: 10,
+  },
   statCard: {
-    width: "48%",
-    padding: 16,
-    borderRadius: 20,
+    flex: 1,
+    padding: 10,
+    borderRadius: 14,
     backgroundColor: "#F8F8FA",
   },
   statLabel: {
-    fontSize: 12,
+    fontSize: 11,
     color: "#8E8E93",
     fontWeight: "600",
-    marginBottom: 8,
+    marginBottom: 4,
   },
   valueRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
   },
-  statValue: { fontSize: 24, fontWeight: "700", color: "#1C1C1E" },
-  trendBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8 },
+  statValue: { fontSize: 18, fontWeight: "700", color: "#1C1C1E" },
+  trendBadge: { paddingHorizontal: 7, paddingVertical: 2, borderRadius: 7 },
   trendText: { fontSize: 11, fontWeight: "700" },
   listHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginTop: 20,
+    marginTop: 10,
   },
-  sectionTitle: { fontSize: 18, fontWeight: "700", color: "#1C1C1E" },
-  filterText: { fontSize: 14, color: "#34C759", fontWeight: "600" },
+  sectionTitle: { fontSize: 15, fontWeight: "700", color: "#1C1C1E" },
+  filterText: { fontSize: 13, color: "#34C759", fontWeight: "600" },
 
-  // Uyarı banner
-  warningScrollArea: { maxHeight: 90 },
-  warningContainer: { paddingHorizontal: 16, paddingTop: 10, gap: 8 },
+  warningContainer: { paddingHorizontal: 12, paddingTop: 8, paddingBottom: 2 },
   warningBanner: {
     flexDirection: "row",
     alignItems: "center",
-    borderRadius: 14,
-    padding: 12,
-    gap: 10,
-    marginBottom: 8,
+    borderRadius: 12,
+    padding: 9,
+    gap: 8,
+    marginBottom: 6,
   },
   warningToday: {
     backgroundColor: "#FFF9ED",
@@ -591,18 +903,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#FF3B30",
   },
-  warningIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    backgroundColor: "#FFF",
-    justifyContent: "center",
-    alignItems: "center",
-  },
   warningBody: { flex: 1 },
-  warningTitle: { fontSize: 12, fontWeight: "800", marginBottom: 2 },
-  warningText: { fontSize: 12, color: "#3A3A3C", lineHeight: 16 },
-  warningActions: { flexDirection: "row", alignItems: "center", gap: 6 },
+  warningTitle: { fontSize: 11, fontWeight: "800", marginBottom: 1 },
+  warningText: { fontSize: 11, color: "#3A3A3C" },
   warningNewBtn: {
     backgroundColor: "#34C759",
     paddingHorizontal: 10,
@@ -610,17 +913,76 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   warningNewBtnText: { fontSize: 11, color: "#FFF", fontWeight: "700" },
-  warningDismiss: { padding: 4 },
 
-  listContent: { paddingHorizontal: 20, paddingTop: 16, paddingBottom: 100 },
+  notifOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.4)",
+    justifyContent: "flex-end",
+  },
+  notifPanel: {
+    backgroundColor: "#FFF",
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    maxHeight: "75%",
+    minHeight: 300,
+  },
+  notifPanelHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: "#F2F2F7",
+  },
+  notifPanelTitle: { fontSize: 18, fontWeight: "800", color: "#1C1C1E" },
+  markAllText: { fontSize: 13, color: "#007AFF", fontWeight: "600" },
+  notifLoading: { padding: 40, alignItems: "center" },
+  notifEmpty: { padding: 40, alignItems: "center", gap: 10 },
+  notifEmptyText: { fontSize: 15, color: "#8E8E93" },
+  notifItem: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 12,
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: "#F2F2F7",
+  },
+  notifItemUnread: { backgroundColor: "#F8FFFE" },
+  notifTypeIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    justifyContent: "center",
+    alignItems: "center",
+    flexShrink: 0,
+  },
+  notifItemTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#1C1C1E",
+    marginBottom: 2,
+  },
+  notifItemBody: { fontSize: 13, color: "#8E8E93", lineHeight: 18 },
+  notifItemTime: { fontSize: 11, color: "#C7C7CC", marginTop: 4 },
+  notifDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: "#34C759",
+    marginTop: 4,
+    flexShrink: 0,
+  },
+
+  listContent: { paddingHorizontal: 12, paddingTop: 8, paddingBottom: 100 },
   clientCard: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    padding: 15,
+    padding: 12,
     backgroundColor: "#FFF",
-    borderRadius: 20,
-    marginBottom: 12,
+    borderRadius: 14,
+    marginBottom: 8,
     elevation: 1,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 1 },
@@ -629,38 +991,37 @@ const styles = StyleSheet.create({
   },
   clientInfo: { flexDirection: "row", alignItems: "center", flex: 1 },
   avatarPlaceholder: {
-    width: 46,
-    height: 46,
-    borderRadius: 23,
+    width: 42,
+    height: 42,
+    borderRadius: 21,
     justifyContent: "center",
     alignItems: "center",
-    marginRight: 14,
+    marginRight: 12,
   },
-  avatarText: { fontSize: 18, fontWeight: "700", color: "#FFF" },
+  avatarText: { fontSize: 16, fontWeight: "700", color: "#FFF" },
   textContainer: { flex: 1 },
-  clientName: { fontSize: 16, fontWeight: "600", color: "#1C1C1E" },
+  clientName: { fontSize: 15, fontWeight: "600", color: "#1C1C1E" },
   statusRow: {
     flexDirection: "row",
     alignItems: "center",
-    marginTop: 4,
+    marginTop: 3,
     gap: 8,
-    justifyContent: "space-around",
   },
-  clientWeightText: { fontSize: 13, color: "#8E8E93" },
+  clientWeightText: { fontSize: 12, color: "#8E8E93" },
   programBadge: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 8,
+    paddingHorizontal: 7,
     paddingVertical: 3,
-    borderRadius: 8,
+    borderRadius: 7,
     gap: 3,
   },
   programBadgeText: { fontSize: 11, fontWeight: "600" },
   createProgramBtn: {
     backgroundColor: "#E5F9ED",
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 7,
   },
   createProgramText: { fontSize: 11, color: "#34C759", fontWeight: "700" },
   emptyContainer: {
@@ -681,34 +1042,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 20,
   },
-  tabBar: {
-    position: "absolute",
-    bottom: 0,
-    width: "100%",
-    height: 85,
-    backgroundColor: "#FFFFFF",
-    flexDirection: "row",
-    justifyContent: "space-around",
-    alignItems: "center",
-    borderTopWidth: 1,
-    borderTopColor: "#F2F2F7",
-  },
-  tabItem: { alignItems: "center" },
-  tabText: { fontSize: 10, marginTop: 4, color: "#8E8E93" },
-  fabButton: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: "#34C759",
-    justifyContent: "center",
-    alignItems: "center",
-    marginBottom: 30,
-    elevation: 4,
-    shadowColor: "#34C759",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-  },
+
   modalOverlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.5)",
@@ -716,9 +1050,10 @@ const styles = StyleSheet.create({
   },
   modalContent: {
     backgroundColor: "#FFF",
-    borderRadius: 30,
-    padding: 28,
-    paddingBottom: 40,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 24,
+    paddingBottom: 36,
   },
   modalHeader: {
     flexDirection: "row",
@@ -726,31 +1061,35 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 8,
   },
-  modalTitle: { fontSize: 20, fontWeight: "700", color: "#1C1C1E" },
+  modalTitle: { fontSize: 18, fontWeight: "700", color: "#1C1C1E" },
   modalSubtitle: {
     fontSize: 14,
     color: "#8E8E93",
-    marginBottom: 20,
+    marginBottom: 16,
     lineHeight: 20,
   },
   modalInput: {
     width: "100%",
-    height: 52,
+    height: 50,
     backgroundColor: "#F2F2F7",
-    borderRadius: 14,
+    borderRadius: 12,
     paddingHorizontal: 16,
-    marginBottom: 20,
+    marginBottom: 16,
     fontSize: 15,
   },
-  modalButtons: { flexDirection: "row", justifyContent: "space-between" },
+  modalButtons: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    gap: 10,
+  },
   modalButton: {
     flex: 1,
-    height: 50,
-    borderRadius: 14,
+    height: 48,
+    borderRadius: 12,
     justifyContent: "center",
     alignItems: "center",
   },
-  confirmButton: { backgroundColor: "#34C759", marginLeft: 10 },
+  confirmButton: { backgroundColor: "#34C759" },
   cancelButton: { backgroundColor: "#F2F2F7" },
   confirmButtonText: { color: "#FFF", fontWeight: "700", fontSize: 15 },
   cancelButtonText: { color: "#8E8E93", fontWeight: "600", fontSize: 15 },

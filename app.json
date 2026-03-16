@@ -48,6 +48,14 @@
           "photosPermission": "Uygulamanın fotoğraflarınıza erişmesine izin verin.",
           "cameraPermission": "Uygulamanın kameranıza erişmesine izin verin."
         }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/notification-icon.png",
+          "color": "#34C759",
+          "sounds": []
+        }
       ]
     ]
   }
