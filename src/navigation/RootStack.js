@@ -13,6 +13,7 @@ import {
   CreateProgram,
   ClientDetail,
   DietitianCalendar,
+  Recipes,
 } from "../pages";
 import { DietitianTabBar } from "../components";
 export const navigationRef = createNavigationContainerRef();
@@ -64,6 +65,10 @@ const RootStack = createNativeStackNavigator({
     },
     DietitianTabBar: {
       screen: DietitianTabBar,
+      options: { headerShown: false },
+    },
+    Recipes: {
+      screen: Recipes,
       options: { headerShown: false },
     },
   },

@@ -9,6 +9,7 @@ import ApprovalScreen from "./Client/ApprovalScreen";
 import CreateProgram from "./Dietitian/CreateProgram";
 import ClientDetail from "./Dietitian/ClientDetail";
 import DietitianCalendar from "./Dietitian/DietitianCalendar";
+import Recipes from "./Dietitian/Recipes";
 export {
   WelcomeScreen,
   SignUpScreen,
@@ -21,4 +22,5 @@ export {
   CreateProgram,
   ClientDetail,
   DietitianCalendar,
+  Recipes,
 };

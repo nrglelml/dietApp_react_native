@@ -26,10 +26,7 @@
               "scheme": "dietapp"
             }
           ],
-          "category": [
-            "BROWSABLE",
-            "DEFAULT"
-          ]
+          "category": ["BROWSABLE", "DEFAULT"]
         }
       ],
       "package": "com.nurgul.dietapp",
@@ -44,7 +41,14 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "@react-native-community/datetimepicker"
+      "@react-native-community/datetimepicker",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Uygulamanın fotoğraflarınıza erişmesine izin verin.",
+          "cameraPermission": "Uygulamanın kameranıza erişmesine izin verin."
+        }
+      ]
     ]
   }
 }

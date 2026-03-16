@@ -16,6 +16,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useNavigation, useRoute } from "@react-navigation/native";
 import { supabase } from "../../../supabase";
+import { generateProgramPDF } from "../../utils/shoppingListPDF";
 
 const TABS = ["Profil", "Program", "Geçmiş"];
 
@@ -83,6 +84,8 @@ const ClientDetail = () => {
   const [openDay, setOpenDay] = useState(null);
   const [pastPrograms, setPastPrograms] = useState([]);
   const [mealStats, setMealStats] = useState({ logged: 0, total: 0 });
+  const [generatingPDF, setGeneratingPDF] = useState(false);
+  const [pdfStatus, setPdfStatus] = useState("");
 
   // Menü
   const [menuVisible, setMenuVisible] = useState(false);
@@ -116,20 +119,24 @@ const ClientDetail = () => {
   };
 
   const fetchPrograms = async () => {
-    const { data: latest } = await supabase
+    const todayStr = new Date().toISOString().split("T")[0];
+
+    // Aktif program: end_date bugün veya ileride olan en son program
+    const { data: active } = await supabase
       .from("diet_programs")
       .select("*")
       .eq("client_id", clientId)
-      .order("week_start", { ascending: false })
+      .gte("end_date", todayStr)
+      .order("end_date", { ascending: false })
       .limit(1)
       .single();
 
-    if (latest) {
-      setCurrentProgram(latest);
+    if (active) {
+      setCurrentProgram(active);
       const { data: meals } = await supabase
         .from("diet_meals")
         .select("*")
-        .eq("program_id", latest.id)
+        .eq("program_id", active.id)
         .order("meal_date")
         .order("meal_time");
       if (meals) {
@@ -141,13 +148,39 @@ const ClientDetail = () => {
       setCurrentMeals([]);
     }
 
+    // Geçmiş: end_date bugünden önce olan programlar
     const { data: past } = await supabase
       .from("diet_programs")
       .select("*, diet_meals(count)")
       .eq("client_id", clientId)
-      .order("week_start", { ascending: false })
+      .lt("end_date", todayStr)
+      .order("end_date", { ascending: false })
       .limit(20);
     if (past) setPastPrograms(past);
+  };
+
+  // ─── ALIŞVERİŞ LİSTESİ PDF ─────────────────────────────────
+  const handleProgramShoppingList = async () => {
+    if (!currentMeals.length) {
+      Alert.alert("Uyarı", "Aktif programda öğün bulunmuyor.");
+      return;
+    }
+    setGeneratingPDF(true);
+    try {
+      await generateProgramPDF(
+        {
+          clientName,
+          programTitle: currentProgram?.title,
+          meals: currentMeals,
+        },
+        (msg) => setPdfStatus(msg),
+      );
+    } catch (e) {
+      Alert.alert("Hata", "PDF oluşturulamadı: " + e.message);
+    } finally {
+      setGeneratingPDF(false);
+      setPdfStatus("");
+    }
   };
 
   // ─── PROGRAM SİL ────────────────────────────────────────
@@ -352,6 +385,13 @@ const ClientDetail = () => {
               </View>
             </View>
 
+            {generatingPDF && pdfStatus ? (
+              <View style={styles.pdfStatusBar}>
+                <ActivityIndicator size="small" color="#34C759" />
+                <Text style={styles.pdfStatusText}>{pdfStatus}</Text>
+              </View>
+            ) : null}
+
             {programDays.map((dateStr) => {
               const dayMeals = currentMeals.filter(
                 (m) => m.meal_date === dateStr,
@@ -494,7 +534,7 @@ const ClientDetail = () => {
     );
   };
 
-  // ─── GEÇMİŞ ───────────────────────────────────────────
+  // ─── GEÇMİŞ PROGRAMLAR ───────────────────────────────────────────
   const renderHistory = () => (
     <ScrollView
       contentContainerStyle={styles.tabContent}
@@ -848,6 +888,24 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
+  shoppingListBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    backgroundColor: "#E5F9ED",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  pdfStatusBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: "#E5F9ED",
+    borderRadius: 10,
+    padding: 10,
+    marginBottom: 10,
+  },
+  pdfStatusText: { fontSize: 13, color: "#34C759", fontWeight: "600" },
   dayAccordion: {
     backgroundColor: "#FFF",
     borderRadius: 16,
@@ -1005,7 +1063,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
 
-  // ... menü
   menuOverlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.3)",

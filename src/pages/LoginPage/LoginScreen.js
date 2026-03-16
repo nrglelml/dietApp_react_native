@@ -31,8 +31,13 @@ const LoginScreen = ({ route }) => {
     setTimeout(() => setMessage({ text: "", type: "" }), 5000);
   };
 
+  const cleanEmail = (raw) => raw.trim().replace(/[^\x20-\x7E@.]/g, "");
+
   const handleLogin = async () => {
-    if (!email || !password) {
+    const cleanedEmail = cleanEmail(email);
+    const cleanedPassword = password.trim();
+
+    if (!cleanedEmail || !cleanedPassword) {
       showMessage("Lütfen e-posta ve şifrenizi girin.", "error");
       return;
     }
@@ -41,8 +46,8 @@ const LoginScreen = ({ route }) => {
     try {
       const { data, error: authError } = await supabase.auth.signInWithPassword(
         {
-          email: email,
-          password: password,
+          email: cleanedEmail,
+          password: cleanedPassword,
         },
       );
 
@@ -98,21 +103,21 @@ const LoginScreen = ({ route }) => {
   };
 
   const handleForgotPassword = async () => {
-    if (!email) {
-      showMessage(
-        "Lütfen şifre sıfırlama kodu için e-postanızı girin.",
-        "error",
-      );
+    const cleanedEmail = cleanEmail(email);
+
+    if (!cleanedEmail) {
+      showMessage("Lütfen şifre sıfırlama için e-postanızı girin.", "error");
       return;
     }
 
     try {
-      const { error } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: "dietapp://update-password",
-      });
-
+      const { error } = await supabase.auth.resetPasswordForEmail(
+        cleanedEmail,
+        {
+          redirectTo: "dietapp://update-password",
+        },
+      );
       if (error) throw error;
-
       showMessage(
         "Şifre sıfırlama e-postası gönderildi. Lütfen gelen kutunuzu kontrol edin.",
         "success",
@@ -140,7 +145,6 @@ const LoginScreen = ({ route }) => {
         </View>
 
         <View style={styles.rolWrapper}>
-          {/* Danışan Kartı */}
           <TouchableOpacity
             style={[
               styles.card,
@@ -158,7 +162,6 @@ const LoginScreen = ({ route }) => {
             {selectedRole === "client" && <View style={styles.checkPoint} />}
           </TouchableOpacity>
 
-          {/* Diyetisyen Kartı */}
           <TouchableOpacity
             style={[
               styles.card,
@@ -185,7 +188,10 @@ const LoginScreen = ({ route }) => {
             style={styles.input}
             placeholder="✉️ name@example.com"
             value={email}
-            onChangeText={setEmail}
+            onChangeText={(v) => setEmail(v.trim())}
+            autoCapitalize="none"
+            autoCorrect={false}
+            keyboardType="email-address"
           />
         </View>
 
@@ -198,6 +204,8 @@ const LoginScreen = ({ route }) => {
               secureTextEntry={!showPassword}
               value={password}
               onChangeText={setPassword}
+              autoCapitalize="none"
+              autoCorrect={false}
             />
             <TouchableOpacity
               style={{ position: "absolute", right: 15 }}
