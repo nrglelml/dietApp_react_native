@@ -12,6 +12,8 @@ import DietitianCalendar from "./Dietitian/DietitianCalendar";
 import Recipes from "./Dietitian/Recipes";
 import Settings from "./Dietitian/Settings";
 import ClientCalendar from "./Client/ClientCalendar";
+import ClientSettings from "./Client/ClientSettings";
+import ClientRecipes from "./Client/ClientRecipes";
 export {
   WelcomeScreen,
   SignUpScreen,
@@ -27,4 +29,6 @@ export {
   Recipes,
   Settings,
   ClientCalendar,
+  ClientSettings,
+  ClientRecipes,
 };

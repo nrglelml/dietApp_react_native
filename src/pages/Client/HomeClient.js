@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import {
   View,
   Text,
@@ -13,9 +13,10 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useNavigation } from "@react-navigation/native";
+import { useNavigation, useFocusEffect } from "@react-navigation/native";
 import { supabase } from "../../../supabase";
 import { ClientTabBar } from "../../components";
+
 const { width } = Dimensions.get("window");
 
 const toLocalDateStr = (date = new Date()) => {
@@ -160,6 +161,13 @@ const HomeClient = () => {
     loadAll();
   }, []);
 
+  // Sayfaya her odaklanınca yenile (ClientSettings'ten dönünce)
+  useFocusEffect(
+    useCallback(() => {
+      loadAll();
+    }, []),
+  );
+
   const loadAll = async () => {
     try {
       const {
@@ -170,7 +178,9 @@ const HomeClient = () => {
       // Profil
       const { data: profile } = await supabase
         .from("client_profiles")
-        .select("full_name, weight, target_weight, height, birth_date")
+        .select(
+          "full_name, weight, target_weight, height, birth_date, age, gender",
+        )
         .eq("id", user.id)
         .single();
       if (profile) {
@@ -272,6 +282,15 @@ const HomeClient = () => {
     return bmi.toFixed(1);
   };
 
+  const getBMICategory = (bmi) => {
+    if (!bmi) return null;
+    const val = parseFloat(bmi);
+    if (val < 18.5) return { label: "Zayıf", color: "#007AFF" };
+    if (val < 25) return { label: "Normal", color: "#34C759" };
+    if (val < 30) return { label: "Fazla Kilolu", color: "#FF9500" };
+    return { label: "Obez", color: "#FF3B30" };
+  };
+
   const getProgress = () => {
     if (!clientData?.weight || !clientData?.target_weight) return null;
     const start = parseFloat(clientData.weight);
@@ -345,9 +364,17 @@ const HomeClient = () => {
           )}
           {bmi && (
             <View style={styles.statCard}>
-              <Ionicons name="body-outline" size={18} color="#FF9500" />
+              <Ionicons
+                name="body-outline"
+                size={18}
+                color={getBMICategory(bmi)?.color || "#FF9500"}
+              />
               <Text style={styles.statValue}>{bmi}</Text>
-              <Text style={styles.statUnit}>BMI</Text>
+              <Text
+                style={[styles.statUnit, { color: getBMICategory(bmi)?.color }]}
+              >
+                {getBMICategory(bmi)?.label || "BMI"}
+              </Text>
             </View>
           )}
         </View>
@@ -369,10 +396,24 @@ const HomeClient = () => {
         )}
 
         {/* KİLO GRAFİĞİ */}
-        {weightHistory.length >= 2 && (
+        {weightHistory.length >= 1 && (
           <View style={styles.card}>
             <Text style={styles.cardTitle}>📈 Kilo Takibi</Text>
-            <LineChart data={weightHistory} color="#34C759" unit="kg" />
+            {weightHistory.length >= 2 ? (
+              <LineChart data={weightHistory} color="#34C759" unit="kg" />
+            ) : (
+              <View style={styles.singleMeasRow}>
+                <Ionicons name="scale-outline" size={28} color="#34C759" />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.singleMeasValue}>
+                    {weightHistory[0]?.value} kg
+                  </Text>
+                  <Text style={styles.singleMeasDate}>
+                    İlk ölçüm · {weightHistory[0]?.date}
+                  </Text>
+                </View>
+              </View>
+            )}
             <TouchableOpacity
               style={styles.addMeasurementBtn}
               onPress={() =>
@@ -385,7 +426,7 @@ const HomeClient = () => {
           </View>
         )}
 
-        {weightHistory.length < 2 && (
+        {weightHistory.length < 1 && (
           <TouchableOpacity
             style={styles.card}
             onPress={() =>
@@ -673,6 +714,21 @@ const styles = StyleSheet.create({
   programDates: { marginBottom: 10 },
   programDate: { fontSize: 13, color: "#8E8E93" },
   viewProgramBtn: { flexDirection: "row", alignItems: "center", gap: 4 },
+  singleMeasRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingVertical: 8,
+    flexWrap: "wrap",
+  },
+  singleMeasValue: { fontSize: 24, fontWeight: "800", color: "#34C759" },
+  singleMeasDate: { fontSize: 12, color: "#8E8E93", marginTop: 2 },
+  singleMeasHint: {
+    fontSize: 11,
+    color: "#C7C7CC",
+    width: "100%",
+    marginTop: 4,
+  },
   viewProgramText: { fontSize: 13, color: "#34C759", fontWeight: "600" },
 });
 
