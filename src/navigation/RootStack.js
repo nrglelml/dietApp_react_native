@@ -15,6 +15,7 @@ import {
   DietitianCalendar,
   Recipes,
   Settings,
+  ClientCalendar,
 } from "../pages";
 import { DietitianTabBar } from "../components";
 export const navigationRef = createNavigationContainerRef();
@@ -42,7 +43,7 @@ const RootStack = createNativeStackNavigator({
     },
     HomeClient: {
       screen: HomeClient,
-      options: { headerShown: true },
+      options: { headerShown: false },
     },
     HomeDyt: {
       screen: HomeDyt,
@@ -74,6 +75,10 @@ const RootStack = createNativeStackNavigator({
     },
     Settings: {
       screen: Settings,
+      options: { headerShown: false },
+    },
+    ClientCalendar: {
+      screen: ClientCalendar,
       options: { headerShown: false },
     },
   },

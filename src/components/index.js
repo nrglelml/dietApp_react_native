@@ -1,3 +1,4 @@
 import DietitianTabBar from "./DietititanTabBar";
+import ClientTabBar from "./ClientTabBar";
 
-export { DietitianTabBar };
+export { DietitianTabBar, ClientTabBar };

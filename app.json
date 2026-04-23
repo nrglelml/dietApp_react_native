@@ -29,6 +29,7 @@
           "category": ["BROWSABLE", "DEFAULT"]
         }
       ],
+      "googleServicesFile": "./google-services.json",
       "package": "com.nurgul.dietapp",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",

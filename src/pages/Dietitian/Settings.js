@@ -15,6 +15,7 @@ import {
   Switch,
   RefreshControl,
 } from "react-native";
+import { useNavigation } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
 import { SafeAreaView } from "react-native-safe-area-context";
 import * as ImagePicker from "expo-image-picker";
@@ -57,6 +58,7 @@ const Settings = () => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const navigation = useNavigation();
 
   // Profil
   const [profile, setProfile] = useState({
@@ -295,7 +297,15 @@ const Settings = () => {
           text: "Çıkış Yap",
           style: "destructive",
           onPress: async () => {
-            await supabase.auth.signOut();
+            try {
+              await supabase.auth.signOut();
+              navigation.reset({
+                index: 0,
+                routes: [{ name: "Welcome" }],
+              });
+            } catch (error) {
+              console.error("Çıkış yapılırken hata oluştu:", error.message);
+            }
           },
         },
       ],
