@@ -64,7 +64,7 @@ LocaleConfig.locales["tr"] = {
 LocaleConfig.defaultLocale = "tr";
 
 const MEAL_TYPES = ["Kahvaltı", "Ara Öğün", "Öğle", "İkindi", "Akşam", "Gece"];
-const DAY_SHORTS = ["Paz", "Pzt", "Sal", "Çar", "Per", "Cum", "Cmt"];
+const DAY_SHORTS = ["Pzt", "Sal", "Çar", "Per", "Cum", "Cmt", "Paz"];
 
 const emptyMeal = () => ({
   id: Date.now() + Math.random(),

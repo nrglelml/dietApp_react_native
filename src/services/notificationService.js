@@ -287,13 +287,13 @@ export const REMINDER_OPTIONS = [
   { label: "3 gün önce", value: 4320 },
 ];
 
-export const DAYS_TR = ["Paz", "Pzt", "Sal", "Çar", "Per", "Cum", "Cmt"];
+export const DAYS_TR = ["Pzt", "Sal", "Çar", "Per", "Cum", "Cmt", "Paz"];
 export const DAYS_FULL_TR = [
-  "Pazar",
   "Pazartesi",
   "Salı",
   "Çarşamba",
   "Perşembe",
   "Cuma",
   "Cumartesi",
+  "Pazar",
 ];

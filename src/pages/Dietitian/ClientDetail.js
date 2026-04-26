@@ -11,27 +11,29 @@ import {
   RefreshControl,
   Alert,
   Modal,
+  Image,
+  TextInput,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useNavigation, useRoute } from "@react-navigation/native";
 import { supabase } from "../../../supabase";
-import { generateProgramPDF } from "../../utils/shoppingListPDF";
 
-const TABS = ["Profil", "Program", "Geçmiş"];
 
-const DAY_SHORTS = ["Paz", "Pzt", "Sal", "Çar", "Per", "Cum", "Cmt"];
+const TABS = ["Profil", "Program", "Öğünler", "Geçmiş"];
+
+const DAY_SHORTS = ["Pzt", "Sal", "Çar", "Per", "Cum", "Cmt", "Paz"];
 const getDayShort = (dateStr) =>
   DAY_SHORTS[new Date(dateStr + "T12:00:00").getDay()];
 const getDayFullName = (dateStr) => {
   const days = [
-    "Pazar",
     "Pazartesi",
     "Salı",
     "Çarşamba",
     "Perşembe",
     "Cuma",
     "Cumartesi",
+    "Pazar",
   ];
   return days[new Date(dateStr + "T12:00:00").getDay()];
 };
@@ -84,15 +86,71 @@ const ClientDetail = () => {
   const [openDay, setOpenDay] = useState(null);
   const [pastPrograms, setPastPrograms] = useState([]);
   const [mealStats, setMealStats] = useState({ logged: 0, total: 0 });
-  const [generatingPDF, setGeneratingPDF] = useState(false);
-  const [pdfStatus, setPdfStatus] = useState("");
+
 
   // Menü
   const [menuVisible, setMenuVisible] = useState(false);
 
+  // Öğünler sekmesi
+  const [mealLogsList, setMealLogsList] = useState([]);
+  const [loadingLogs, setLoadingLogs] = useState(false);
+  const [reactionModal, setReactionModal] = useState(false);
+  const [selectedLog, setSelectedLog] = useState(null);
+  const [reactionText, setReactionText] = useState("");
+  const [sendingReaction, setSendingReaction] = useState(false);
+
   useEffect(() => {
     loadAll();
   }, []);
+
+  useEffect(() => {
+    if (activeTab === 2) fetchMealLogs();
+  }, [activeTab]);
+
+  const fetchMealLogs = async () => {
+    setLoadingLogs(true);
+    try {
+      const { data: logs } = await supabase
+        .from("meal_logs")
+        .select(
+          "*, diet_meals(meal_name, meal_date, meal_time, notes), meal_reactions(*)",
+        )
+        .eq("client_id", clientId)
+        .not("photo_url", "is", null)
+        .order("logged_at", { ascending: false })
+        .limit(50);
+      setMealLogsList(logs || []);
+    } catch (e) {
+      console.log("fetchMealLogs:", e.message);
+    } finally {
+      setLoadingLogs(false);
+    }
+  };
+
+  const sendReaction = async (emoji = null) => {
+    if (!selectedLog) return;
+    const content = emoji || reactionText.trim();
+    if (!content) return;
+    setSendingReaction(true);
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      await supabase.from("meal_reactions").insert({
+        meal_log_id: selectedLog.id,
+        dietitian_id: user.id,
+        reaction_type: emoji ? "emoji" : "message",
+        content,
+      });
+      setReactionText("");
+      if (!emoji) setReactionModal(false);
+      await fetchMealLogs();
+    } catch (e) {
+      Alert.alert("Hata", e.message);
+    } finally {
+      setSendingReaction(false);
+    }
+  };
 
   const loadAll = async () => {
     setLoading(true);
@@ -159,29 +217,7 @@ const ClientDetail = () => {
     if (past) setPastPrograms(past);
   };
 
-  // ─── ALIŞVERİŞ LİSTESİ PDF ─────────────────────────────────
-  const handleProgramShoppingList = async () => {
-    if (!currentMeals.length) {
-      Alert.alert("Uyarı", "Aktif programda öğün bulunmuyor.");
-      return;
-    }
-    setGeneratingPDF(true);
-    try {
-      await generateProgramPDF(
-        {
-          clientName,
-          programTitle: currentProgram?.title,
-          meals: currentMeals,
-        },
-        (msg) => setPdfStatus(msg),
-      );
-    } catch (e) {
-      Alert.alert("Hata", "PDF oluşturulamadı: " + e.message);
-    } finally {
-      setGeneratingPDF(false);
-      setPdfStatus("");
-    }
-  };
+
 
   // ─── PROGRAM SİL ────────────────────────────────────────
   const handleDeleteProgram = (program) => {
@@ -297,10 +333,49 @@ const ClientDetail = () => {
           <Ionicons name="warning-outline" size={18} color="#FF9500" />
           <Text style={styles.cardTitle}>Alerji / Kısıtlamalar</Text>
         </View>
-        <Text style={styles.allergyText}>
-          {profile?.allergies || "Herhangi bir alerji bilgisi girilmemiş."}
-        </Text>
+        {profile?.allergies?.length > 0 ? (
+          <View style={styles.tagContainer}>
+            {profile.allergies.map((item, i) => (
+              <View key={i} style={styles.allergyTag}>
+                <Text style={styles.allergyTagText}>{item}</Text>
+              </View>
+            ))}
+          </View>
+        ) : (
+          <Text style={styles.emptyText}>
+            Herhangi bir alerji bilgisi girilmemiş.
+          </Text>
+        )}
       </View>
+
+      <View style={styles.card}>
+        <View style={styles.cardHeader}>
+          <Ionicons name="restaurant-outline" size={18} color="#FF9500" />
+          <Text style={styles.cardTitle}>Sevmediği Besinler</Text>
+        </View>
+        {profile?.disliked_foods?.length > 0 ? (
+          <View style={styles.tagContainer}>
+            {profile.disliked_foods.map((item, i) => (
+              <View
+                key={i}
+                style={[
+                  styles.allergyTag,
+                  { borderColor: "#FF9500", backgroundColor: "#FFF8EE" },
+                ]}
+              >
+                <Text style={[styles.allergyTagText, { color: "#FF9500" }]}>
+                  {item}
+                </Text>
+              </View>
+            ))}
+          </View>
+        ) : (
+          <Text style={styles.emptyText}>
+            Sevmediği besin bilgisi girilmemiş.
+          </Text>
+        )}
+      </View>
+
       <View style={styles.card}>
         <View style={styles.cardHeader}>
           <Ionicons name="restaurant-outline" size={18} color="#34C759" />
@@ -332,7 +407,10 @@ const ClientDetail = () => {
         <Text style={styles.emailText}>{profile?.email || "—"}</Text>
       </View>
       <Text style={styles.joinDate}>
-        Katılım: {formatDate(profile?.created_at)}
+        Katılım:{" "}
+        {profile?.created_at
+          ? formatDate(profile.created_at.replace(" ", "T").split("T")[0])
+          : "—"}
       </Text>
     </ScrollView>
   );
@@ -385,13 +463,7 @@ const ClientDetail = () => {
               </View>
             </View>
 
-            {generatingPDF && pdfStatus ? (
-              <View style={styles.pdfStatusBar}>
-                <ActivityIndicator size="small" color="#34C759" />
-                <Text style={styles.pdfStatusText}>{pdfStatus}</Text>
-              </View>
-            ) : null}
-
+            
             {programDays.map((dateStr) => {
               const dayMeals = currentMeals.filter(
                 (m) => m.meal_date === dateStr,
@@ -534,7 +606,145 @@ const ClientDetail = () => {
     );
   };
 
-  // ─── GEÇMİŞ PROGRAMLAR ───────────────────────────────────────────
+  // ─── ÖĞÜNLER SEKMESİ ──────────────────────────────────────────
+  const renderMealLogs = () => {
+    if (loadingLogs)
+      return (
+        <View style={styles.center}>
+          <ActivityIndicator size="large" color="#34C759" />
+        </View>
+      );
+
+    return (
+      <ScrollView
+        contentContainerStyle={styles.tabContent}
+        showsVerticalScrollIndicator={false}
+      >
+        {mealLogsList.length === 0 ? (
+          <View style={styles.noProgramContainer}>
+            <Ionicons name="camera-outline" size={64} color="#E5E5EA" />
+            <Text style={styles.noProgramTitle}>Öğün Fotoğrafı Yok</Text>
+            <Text style={styles.noProgramText}>
+              Danışan henüz öğün fotoğrafı yüklememış.
+            </Text>
+          </View>
+        ) : (
+          mealLogsList.map((log) => (
+            <View key={log.id} style={styles.logCard}>
+              <View style={styles.logHeader}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.logMealName}>
+                    {log.diet_meals?.meal_name}
+                  </Text>
+                  <Text style={styles.logMealDate}>
+                    {log.diet_meals?.meal_date} ·{" "}
+                    {log.diet_meals?.meal_time?.slice(0, 5)}
+                  </Text>
+                </View>
+                <View
+                  style={[
+                    styles.logStatusBadge,
+                    {
+                      backgroundColor:
+                        log.status === "eaten" ? "#E5F9ED" : "#FFF0EE",
+                    },
+                  ]}
+                >
+                  <Text
+                    style={{
+                      fontSize: 11,
+                      fontWeight: "700",
+                      color: log.status === "eaten" ? "#34C759" : "#FF3B30",
+                    }}
+                  >
+                    {log.status === "eaten" ? "Yedim" : "Yemedim"}
+                  </Text>
+                </View>
+              </View>
+
+              {log.photo_url && (
+                <Image
+                  source={{ uri: log.photo_url }}
+                  style={styles.logPhoto}
+                  resizeMode="cover"
+                />
+              )}
+
+              {(log.portion_note || log.change_note) && (
+                <View style={styles.logNotes}>
+                  {log.portion_note && (
+                    <Text style={styles.logNoteText}>
+                      📝 {log.portion_note}
+                    </Text>
+                  )}
+                  {log.change_note && (
+                    <Text style={styles.logNoteText}>🔄 {log.change_note}</Text>
+                  )}
+                </View>
+              )}
+
+              {log.meal_reactions?.length > 0 && (
+                <View style={styles.reactionsContainer}>
+                  {log.meal_reactions.map((r) => (
+                    <View
+                      key={r.id}
+                      style={[
+                        styles.reactionBubble,
+                        r.reaction_type === "emoji"
+                          ? styles.emojiBubble
+                          : styles.messageBubble,
+                      ]}
+                    >
+                      <Text
+                        style={
+                          r.reaction_type === "emoji"
+                            ? styles.emojiText
+                            : styles.messageText
+                        }
+                      >
+                        {r.content}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+              )}
+
+              <View style={styles.quickEmojis}>
+                {["👍", "❤️", "🎉", "💪", "🔥"].map((emoji) => (
+                  <TouchableOpacity
+                    key={emoji}
+                    style={styles.quickEmojiBtn}
+                    onPress={() => {
+                      setSelectedLog(log);
+                      sendReaction(emoji);
+                    }}
+                  >
+                    <Text style={styles.quickEmojiText}>{emoji}</Text>
+                  </TouchableOpacity>
+                ))}
+                <TouchableOpacity
+                  style={styles.messageBtn}
+                  onPress={() => {
+                    setSelectedLog(log);
+                    setReactionModal(true);
+                  }}
+                >
+                  <Ionicons
+                    name="chatbubble-outline"
+                    size={16}
+                    color="#007AFF"
+                  />
+                  <Text style={styles.messageBtnText}>Mesaj</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ))
+        )}
+      </ScrollView>
+    );
+  };
+
+  // ─── GEÇMİŞ ───────────────────────────────────────────
   const renderHistory = () => (
     <ScrollView
       contentContainerStyle={styles.tabContent}
@@ -651,7 +861,75 @@ const ClientDetail = () => {
 
       {activeTab === 0 && renderProfile()}
       {activeTab === 1 && renderProgram()}
-      {activeTab === 2 && renderHistory()}
+      {activeTab === 2 && renderMealLogs()}
+      {activeTab === 3 && renderHistory()}
+
+      {/* REAKSİYON MODAL */}
+      <Modal
+        visible={reactionModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setReactionModal(false)}
+      >
+        <View style={styles.reactionModalOverlay}>
+          <TouchableOpacity
+            style={{ flex: 1 }}
+            onPress={() => setReactionModal(false)}
+          />
+          <View style={styles.reactionModal}>
+            <View style={styles.reactionModalHeader}>
+              <Text style={styles.reactionModalTitle}>Mesaj Gönder</Text>
+              <TouchableOpacity onPress={() => setReactionModal(false)}>
+                <Ionicons name="close" size={24} color="#8E8E93" />
+              </TouchableOpacity>
+            </View>
+            {selectedLog?.photo_url && (
+              <Image
+                source={{ uri: selectedLog.photo_url }}
+                style={styles.reactionPreviewPhoto}
+                resizeMode="cover"
+              />
+            )}
+            <Text style={styles.reactionMealName}>
+              {selectedLog?.diet_meals?.meal_name}
+            </Text>
+            <View style={styles.emojiRow}>
+              {["👍", "❤️", "🎉", "💪", "⭐", "😊", "🔥", "👏"].map((emoji) => (
+                <TouchableOpacity
+                  key={emoji}
+                  style={styles.emojiPickerBtn}
+                  onPress={() => sendReaction(emoji)}
+                >
+                  <Text style={{ fontSize: 24 }}>{emoji}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            <View style={styles.reactionInputRow}>
+              <TextInput
+                style={styles.reactionInput}
+                placeholder="Mesaj yaz..."
+                value={reactionText}
+                onChangeText={setReactionText}
+                multiline
+              />
+              <TouchableOpacity
+                style={[
+                  styles.reactionSendBtn,
+                  (!reactionText.trim() || sendingReaction) && { opacity: 0.5 },
+                ]}
+                onPress={() => sendReaction()}
+                disabled={!reactionText.trim() || sendingReaction}
+              >
+                {sendingReaction ? (
+                  <ActivityIndicator size="small" color="#FFF" />
+                ) : (
+                  <Ionicons name="send" size={18} color="#FFF" />
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       {/* ... MENÜ MODAL */}
       <Modal
@@ -836,6 +1114,28 @@ const styles = StyleSheet.create({
   },
   cardTitle: { fontSize: 15, fontWeight: "700", color: "#1C1C1E" },
   allergyText: { fontSize: 14, color: "#3A3A3C", lineHeight: 20 },
+  tagContainer: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  allergyTag: {
+    backgroundColor: "#FFF0EE",
+    borderWidth: 1,
+    borderColor: "#FF3B30",
+    borderRadius: 20,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  allergyTagText: { fontSize: 13, color: "#FF3B30", fontWeight: "600" },
+  avatarImg: { width: 40, height: 40, borderRadius: 20 },
+  tagContainer: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  allergyTag: {
+    backgroundColor: "#FFF0EE",
+    borderWidth: 1,
+    borderColor: "#FF3B30",
+    borderRadius: 20,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  allergyTagText: { fontSize: 13, color: "#FF3B30", fontWeight: "600" },
+  avatarImg: { width: 40, height: 40, borderRadius: 20 },
   emailText: { fontSize: 14, color: "#007AFF" },
   joinDate: {
     textAlign: "center",
@@ -896,16 +1196,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
-  pdfStatusBar: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    backgroundColor: "#E5F9ED",
-    borderRadius: 10,
-    padding: 10,
-    marginBottom: 10,
-  },
-  pdfStatusText: { fontSize: 13, color: "#34C759", fontWeight: "600" },
+ 
   dayAccordion: {
     backgroundColor: "#FFF",
     borderRadius: 16,
@@ -1063,6 +1354,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
 
+  // ... menü
   menuOverlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.3)",
@@ -1091,6 +1383,138 @@ const styles = StyleSheet.create({
   },
   menuItemText: { fontSize: 15, fontWeight: "600", color: "#1C1C1E" },
   menuDivider: { height: 1, backgroundColor: "#F2F2F7", marginHorizontal: 12 },
+
+  // Öğün logları
+  logCard: {
+    backgroundColor: "#FFF",
+    borderRadius: 16,
+    marginBottom: 12,
+    overflow: "hidden",
+    elevation: 1,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 4,
+  },
+  logHeader: { flexDirection: "row", alignItems: "center", padding: 12 },
+  logMealName: { fontSize: 15, fontWeight: "700", color: "#1C1C1E" },
+  logMealDate: { fontSize: 12, color: "#8E8E93", marginTop: 2 },
+  logStatusBadge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 },
+  logPhoto: { width: "100%", height: 220 },
+  logNotes: {
+    padding: 12,
+    gap: 4,
+    borderTopWidth: 1,
+    borderTopColor: "#F2F2F7",
+  },
+  logNoteText: { fontSize: 13, color: "#3A3A3C", lineHeight: 18 },
+  reactionsContainer: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    padding: 12,
+    paddingBottom: 4,
+    borderTopWidth: 1,
+    borderTopColor: "#F2F2F7",
+  },
+  reactionBubble: {
+    borderRadius: 16,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  emojiBubble: { backgroundColor: "#F2F2F7" },
+  messageBubble: { backgroundColor: "#EEF4FF", maxWidth: 260 },
+  emojiText: { fontSize: 16 },
+  messageText: { fontSize: 13, color: "#007AFF" },
+  quickEmojis: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    padding: 10,
+    borderTopWidth: 1,
+    borderTopColor: "#F2F2F7",
+  },
+  quickEmojiBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: "#F2F2F7",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  quickEmojiText: { fontSize: 18 },
+  messageBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    marginLeft: "auto",
+    backgroundColor: "#EEF4FF",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 12,
+  },
+  messageBtnText: { fontSize: 13, color: "#007AFF", fontWeight: "600" },
+
+  // Reaction modal
+  reactionModalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    justifyContent: "flex-end",
+  },
+  reactionModal: {
+    backgroundColor: "#FFF",
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 20,
+    paddingBottom: 36,
+  },
+  reactionModalHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 12,
+  },
+  reactionModalTitle: { fontSize: 18, fontWeight: "700", color: "#1C1C1E" },
+  reactionPreviewPhoto: {
+    width: "100%",
+    height: 160,
+    borderRadius: 12,
+    marginBottom: 10,
+  },
+  reactionMealName: { fontSize: 14, color: "#8E8E93", marginBottom: 12 },
+  emojiRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+    marginBottom: 16,
+  },
+  emojiPickerBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "#F2F2F7",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  reactionInputRow: { flexDirection: "row", gap: 10, alignItems: "flex-end" },
+  reactionInput: {
+    flex: 1,
+    backgroundColor: "#F2F2F7",
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    fontSize: 15,
+    color: "#1C1C1E",
+    maxHeight: 100,
+  },
+  reactionSendBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "#007AFF",
+    justifyContent: "center",
+    alignItems: "center",
+  },
 });
 
 export default ClientDetail;

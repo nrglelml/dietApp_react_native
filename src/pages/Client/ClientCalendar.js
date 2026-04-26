@@ -12,10 +12,13 @@ import {
   TextInput,
   Alert,
   RefreshControl,
+  Image,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { supabase } from "../../../supabase";
+import { generateProgramPDF } from "../../utils/shoppingListPDF";
+import * as ImagePicker from "expo-image-picker";
 import { ClientTabBar } from "../../components";
 
 const DAYS_TR = [
@@ -70,10 +73,14 @@ const ClientCalendar = () => {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [clientId, setClientId] = useState(null);
+  const [currentProgramId, setCurrentProgramId] = useState(null);
   const [meals, setMeals] = useState([]);
   const [mealLogs, setMealLogs] = useState({});
   const [appointments, setAppointments] = useState([]);
   const [programRange, setProgramRange] = useState(null);
+  const [generatingPDF, setGeneratingPDF] = useState(false);
+  const [pdfStatus, setPdfStatus] = useState("");
+  const [clientName, setClientName] = useState("");
 
   // Log modal
   const [logModalVisible, setLogModalVisible] = useState(false);
@@ -82,6 +89,8 @@ const ClientCalendar = () => {
   const [portionNote, setPortionNote] = useState("");
   const [changeNote, setChangeNote] = useState("");
   const [savingLog, setSavingLog] = useState(false);
+  const [localPhoto, setLocalPhoto] = useState(null);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
 
   useEffect(() => {
     initLoad();
@@ -100,16 +109,54 @@ const ClientCalendar = () => {
     // Program tarih aralığını öğren
     const { data: program } = await supabase
       .from("diet_programs")
-      .select("start_date, end_date")
+      .select("id, start_date, end_date") // ← id eklendi
       .eq("client_id", user.id)
       .gte("end_date", toLocalDateStr())
       .order("end_date", { ascending: false })
       .limit(1)
       .single();
 
-    if (program)
+    if (program) {
       setProgramRange({ start: program.start_date, end: program.end_date });
+      setCurrentProgramId(program.id);
+    }
+    // Client adı
+    const { data: prof } = await supabase
+      .from("client_profiles")
+      .select("full_name")
+      .eq("id", user.id)
+      .single();
+    if (prof) setClientName(prof.full_name || "");
     setLoading(false);
+  };
+
+  const handleShoppingList = async () => {
+    if (!currentProgramId) {
+      Alert.alert("Uyarı", "Aktif program bulunamadı.");
+      return;
+    }
+    setGeneratingPDF(true);
+    try {
+      const { data: meals } = await supabase
+        .from("diet_meals")
+        .select("*")
+        .eq("program_id", currentProgramId)
+        .order("meal_date")
+        .order("meal_time");
+      if (!meals?.length) {
+        Alert.alert("Uyarı", "Programda öğün bulunmuyor.");
+        return;
+      }
+      await generateProgramPDF(
+        { clientName, programTitle: "Haftalık Program", meals },
+        (msg) => setPdfStatus(msg),
+      );
+    } catch (e) {
+      Alert.alert("Hata", "PDF oluşturulamadı: " + e.message);
+    } finally {
+      setGeneratingPDF(false);
+      setPdfStatus("");
+    }
   };
 
   const fetchDayData = async () => {
@@ -137,7 +184,7 @@ const ClientCalendar = () => {
         if (dayMeals?.length) {
           const { data: logs } = await supabase
             .from("meal_logs")
-            .select("*")
+            .select("*, meal_reactions(*)")
             .eq("client_id", clientId)
             .in(
               "meal_id",
@@ -181,7 +228,70 @@ const ClientCalendar = () => {
     setLogStatus(existing?.status || "eaten");
     setPortionNote(existing?.portion_note || "");
     setChangeNote(existing?.change_note || "");
+    setLocalPhoto(null);
     setLogModalVisible(true);
+  };
+
+  const pickPhoto = () => {
+    Alert.alert("Öğün Fotoğrafı", "Kaynak seçin", [
+      {
+        text: "Kamera",
+        onPress: async () => {
+          const { status } = await ImagePicker.requestCameraPermissionsAsync();
+          if (status !== "granted") {
+            Alert.alert("İzin Gerekli", "Kamera izni gerekiyor.");
+            return;
+          }
+          const r = await ImagePicker.launchCameraAsync({
+            allowsEditing: true,
+            aspect: [4, 3],
+            quality: 0.7,
+          });
+          if (!r.canceled) setLocalPhoto(r.assets[0].uri);
+        },
+      },
+      {
+        text: "Galeri",
+        onPress: async () => {
+          const { status } =
+            await ImagePicker.requestMediaLibraryPermissionsAsync();
+          if (status !== "granted") {
+            Alert.alert("İzin Gerekli", "Galeri izni gerekiyor.");
+            return;
+          }
+          const r = await ImagePicker.launchImageLibraryAsync({
+            allowsEditing: true,
+            aspect: [4, 3],
+            quality: 0.7,
+          });
+          if (!r.canceled) setLocalPhoto(r.assets[0].uri);
+        },
+      },
+      { text: "İptal", style: "cancel" },
+    ]);
+  };
+
+  const uploadPhoto = async (uri) => {
+    setUploadingPhoto(true);
+    try {
+      const ext = uri.split(".").pop() || "jpg";
+      const fileName = `${clientId}/${selectedMeal.id}_${Date.now()}.${ext}`;
+      const res = await fetch(uri);
+      const blob = await res.blob();
+      const buf = await new Response(blob).arrayBuffer();
+      await supabase.storage
+        .from("meal-photos")
+        .upload(fileName, buf, { contentType: `image/${ext}`, upsert: true });
+      const { data } = supabase.storage
+        .from("meal-photos")
+        .getPublicUrl(fileName);
+      return data.publicUrl + "?t=" + Date.now();
+    } catch (e) {
+      Alert.alert("Hata", "Fotoğraf yüklenemedi: " + e.message);
+      return null;
+    } finally {
+      setUploadingPhoto(false);
+    }
   };
 
   const saveLog = async () => {
@@ -189,12 +299,16 @@ const ClientCalendar = () => {
     setSavingLog(true);
     try {
       const existing = mealLogs[selectedMeal.id];
+      let photoUrl = mealLogs[selectedMeal.id]?.photo_url || null;
+      if (localPhoto) photoUrl = await uploadPhoto(localPhoto);
+
       const payload = {
         client_id: clientId,
         meal_id: selectedMeal.id,
         status: logStatus,
         portion_note: portionNote.trim() || null,
         change_note: changeNote.trim() || null,
+        photo_url: photoUrl,
         logged_at: new Date().toISOString(),
       };
 
@@ -300,6 +414,27 @@ const ClientCalendar = () => {
                 {eatenCount}/{meals.length} öğün
               </Text>
             </View>
+            {/* PDF OLUŞTURMA LİSTESİ */}
+            <View style={styles.alisverisIkon}>
+              <TouchableOpacity
+                style={[styles.cartBtn, generatingPDF && { opacity: 0.5 }]}
+                onPress={handleShoppingList}
+                disabled={generatingPDF}
+              >
+                {generatingPDF ? (
+                  <ActivityIndicator size="small" color="#34C759" />
+                ) : (
+                  <Ionicons name="cart-outline" size={20} color="#34C759" />
+                )}
+              </TouchableOpacity>
+            </View>
+
+            {pdfStatus ? (
+              <View style={styles.pdfStatusBar}>
+                <ActivityIndicator size="small" color="#34C759" />
+                <Text style={styles.pdfStatusText}>{pdfStatus}</Text>
+              </View>
+            ) : null}
             {totalCalories > 0 && (
               <View style={styles.summaryChip}>
                 <Ionicons name="flame-outline" size={14} color="#FF9500" />
@@ -494,6 +629,34 @@ const ClientCalendar = () => {
               <Text style={styles.logModalNotes}>{selectedMeal.notes}</Text>
             )}
 
+            {/* Diyetisyen Reaksiyonları */}
+            {mealLogs[selectedMeal?.id]?.meal_reactions?.length > 0 && (
+              <View style={styles.dytReactions}>
+                <Text style={styles.dytReactionsLabel}>💬 Diyetisyen</Text>
+                {mealLogs[selectedMeal?.id]?.meal_reactions.map((r) => (
+                  <View
+                    key={r.id}
+                    style={[
+                      styles.dytReactionBubble,
+                      r.reaction_type === "emoji"
+                        ? styles.dytEmoji
+                        : styles.dytMessage,
+                    ]}
+                  >
+                    <Text
+                      style={
+                        r.reaction_type === "emoji"
+                          ? styles.dytEmojiText
+                          : styles.dytMessageText
+                      }
+                    >
+                      {r.content}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            )}
+
             {/* Durum seçimi */}
             <Text style={styles.logFieldLabel}>Durum</Text>
             <View style={styles.statusRow}>
@@ -558,6 +721,26 @@ const ClientCalendar = () => {
               multiline
             />
 
+            {/* Fotoğraf */}
+            <Text style={styles.logFieldLabel}>Öğün Fotoğrafı</Text>
+            <TouchableOpacity style={styles.photoPickerBtn} onPress={pickPhoto}>
+              {localPhoto || mealLogs[selectedMeal?.id]?.photo_url ? (
+                <Image
+                  source={{
+                    uri: localPhoto || mealLogs[selectedMeal?.id]?.photo_url,
+                  }}
+                  style={styles.photoPreview}
+                />
+              ) : (
+                <View style={styles.photoPlaceholder}>
+                  <Ionicons name="camera-outline" size={24} color="#8E8E93" />
+                  <Text style={styles.photoPlaceholderText}>
+                    Fotoğraf Ekle (opsiyonel)
+                  </Text>
+                </View>
+              )}
+            </TouchableOpacity>
+
             <View style={styles.logModalBtns}>
               {mealLogs[selectedMeal?.id] && (
                 <TouchableOpacity
@@ -568,9 +751,12 @@ const ClientCalendar = () => {
                 </TouchableOpacity>
               )}
               <TouchableOpacity
-                style={[styles.saveLogBtn, savingLog && { opacity: 0.6 }]}
+                style={[
+                  styles.saveLogBtn,
+                  (savingLog || uploadingPhoto) && { opacity: 0.6 },
+                ]}
                 onPress={saveLog}
-                disabled={savingLog}
+                disabled={savingLog || uploadingPhoto}
               >
                 {savingLog ? (
                   <ActivityIndicator size="small" color="#FFF" />
@@ -624,6 +810,24 @@ const styles = StyleSheet.create({
     backgroundColor: "#E5F9ED",
     borderRadius: 20,
   },
+  cartBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: "#E5F9ED",
+    justifyContent: "center",
+    alignItems: "center",
+    marginLeft: 4,
+  },
+  pdfStatusBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: "#E5F9ED",
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+  },
+  pdfStatusText: { fontSize: 13, color: "#34C759", fontWeight: "600" },
   todayBtnText: { fontSize: 13, color: "#34C759", fontWeight: "700" },
 
   scrollContent: { paddingHorizontal: 16, paddingTop: 12 },
@@ -816,6 +1020,46 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   saveLogBtnText: { fontSize: 15, color: "#FFF", fontWeight: "700" },
+  photoPickerBtn: { marginTop: 4, borderRadius: 12, overflow: "hidden" },
+  photoPreview: { width: "100%", height: 160, borderRadius: 12 },
+  photoPlaceholder: {
+    height: 100,
+    backgroundColor: "#F2F2F7",
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: "#E5E5EA",
+    borderStyle: "dashed",
+    justifyContent: "center",
+    alignItems: "center",
+    gap: 6,
+  },
+  photoPlaceholderText: { fontSize: 13, color: "#8E8E93" },
+  dytReactions: {
+    backgroundColor: "#EEF4FF",
+    borderRadius: 12,
+    padding: 10,
+    marginBottom: 4,
+    gap: 6,
+  },
+  dytReactionsLabel: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#007AFF",
+    marginBottom: 4,
+  },
+  dytReactionBubble: {
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    alignSelf: "flex-start",
+  },
+  dytEmoji: { backgroundColor: "#FFF" },
+  dytMessage: { backgroundColor: "#FFF" },
+  dytEmojiText: { fontSize: 20 },
+  dytMessageText: { fontSize: 14, color: "#007AFF" },
+  alisverisIkon: {
+    alignSelf: "flex-end",
+  },
 });
 
 export default ClientCalendar;

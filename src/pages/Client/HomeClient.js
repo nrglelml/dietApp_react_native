@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import {
   View,
   Text,
@@ -10,11 +10,13 @@ import {
   Platform,
   RefreshControl,
   Dimensions,
+  Alert,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useNavigation, useFocusEffect } from "@react-navigation/native";
 import { supabase } from "../../../supabase";
+import { generateProgramPDF } from "../../utils/shoppingListPDF";
 import { ClientTabBar } from "../../components";
 
 const { width } = Dimensions.get("window");
@@ -27,7 +29,7 @@ const toLocalDateStr = (date = new Date()) => {
 };
 const todayStr = toLocalDateStr();
 
-const DAYS_TR = ["Paz", "Pzt", "Sal", "Çar", "Per", "Cum", "Cmt"];
+const DAYS_TR = ["Pzt", "Sal", "Çar", "Per", "Cum", "Cmt", "Paz"];
 const MONTHS_TR = [
   "Ocak",
   "Şubat",
@@ -156,6 +158,8 @@ const HomeClient = () => {
   const [nextAppointment, setNextAppointment] = useState(null);
   const [weightHistory, setWeightHistory] = useState([]);
   const [latestMeasurement, setLatestMeasurement] = useState(null);
+  const [generatingPDF, setGeneratingPDF] = useState(false);
+  const [pdfStatus, setPdfStatus] = useState("");
 
   useEffect(() => {
     loadAll();
@@ -268,6 +272,38 @@ const HomeClient = () => {
     await loadAll();
     setRefreshing(false);
   }, []);
+
+  const handleShoppingList = async () => {
+    if (!activeProgram) {
+      Alert.alert("Uyarı", "Aktif program bulunamadı.");
+      return;
+    }
+    setGeneratingPDF(true);
+    try {
+      // Programın tüm öğünlerini çek
+      const { data: meals } = await supabase
+        .from("diet_meals")
+        .select("*")
+        .eq("program_id", activeProgram.id)
+        .order("meal_date")
+        .order("meal_time");
+
+      if (!meals?.length) {
+        Alert.alert("Uyarı", "Programda öğün bulunmuyor.");
+        return;
+      }
+
+      await generateProgramPDF(
+        { clientName, programTitle: activeProgram.title, meals },
+        (msg) => setPdfStatus(msg),
+      );
+    } catch (e) {
+      Alert.alert("Hata", "PDF oluşturulamadı: " + e.message);
+    } finally {
+      setGeneratingPDF(false);
+      setPdfStatus("");
+    }
+  };
 
   const getGreeting = () => {
     const h = new Date().getHours();
@@ -567,6 +603,33 @@ const HomeClient = () => {
               <Text style={styles.viewProgramText}>Programı Görüntüle</Text>
               <Ionicons name="chevron-forward" size={14} color="#34C759" />
             </TouchableOpacity>
+
+            {pdfStatus ? (
+              <View style={styles.pdfStatusBar}>
+                <ActivityIndicator size="small" color="#34C759" />
+                <Text style={styles.pdfStatusText}>{pdfStatus}</Text>
+              </View>
+            ) : null}
+
+            <TouchableOpacity
+              style={[
+                styles.shoppingListBtn,
+                generatingPDF && { opacity: 0.6 },
+              ]}
+              onPress={handleShoppingList}
+              disabled={generatingPDF}
+            >
+              {generatingPDF ? (
+                <ActivityIndicator size="small" color="#FFF" />
+              ) : (
+                <>
+                  <Ionicons name="cart-outline" size={16} color="#FFF" />
+                  <Text style={styles.shoppingListBtnText}>
+                    Alışveriş Listesi İndir
+                  </Text>
+                </>
+              )}
+            </TouchableOpacity>
           </View>
         )}
 
@@ -729,6 +792,27 @@ const styles = StyleSheet.create({
     width: "100%",
     marginTop: 4,
   },
+  pdfStatusBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: "#E5F9ED",
+    borderRadius: 10,
+    padding: 10,
+    marginTop: 10,
+  },
+  pdfStatusText: { fontSize: 13, color: "#34C759", fontWeight: "600" },
+  shoppingListBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    backgroundColor: "#34C759",
+    padding: 12,
+    borderRadius: 12,
+    marginTop: 10,
+  },
+  shoppingListBtnText: { fontSize: 14, color: "#FFF", fontWeight: "700" },
   viewProgramText: { fontSize: 13, color: "#34C759", fontWeight: "600" },
 });
 

@@ -51,15 +51,15 @@ LocaleConfig.locales["tr"] = {
     "Ara",
   ],
   dayNames: [
-    "Pazar",
     "Pazartesi",
     "Salı",
     "Çarşamba",
     "Perşembe",
     "Cuma",
     "Cumartesi",
+    "Pazar",
   ],
-  dayNamesShort: ["Paz", "Pzt", "Sal", "Çar", "Per", "Cum", "Cmt"],
+  dayNamesShort: ["Pzt", "Sal", "Çar", "Per", "Cum", "Cmt", "Paz"],
   today: "Bugün",
 };
 LocaleConfig.defaultLocale = "tr";
