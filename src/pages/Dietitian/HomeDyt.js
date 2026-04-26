@@ -14,6 +14,7 @@ import {
   RefreshControl,
   ScrollView,
   KeyboardAvoidingView,
+  Image,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { supabase } from "../../../supabase";
@@ -222,7 +223,9 @@ const HomeDyt = () => {
   const fetchClients = async (dytId) => {
     const { data, error } = await supabase
       .from("client_profiles")
-      .select("id, full_name, weight, height, status, email, created_at")
+      .select(
+        "id, full_name, weight, height, status, email, created_at,avatar_url",
+      )
       .eq("dietitian_id", dytId)
       .eq("status", "active")
       .order("full_name", { ascending: true });
@@ -383,18 +386,28 @@ const HomeDyt = () => {
           navigation.navigate("ClientDetail", {
             clientId: item.id,
             clientName: item.full_name,
+            clientAvatar: item.avatar_url,
           })
         }
       >
         <View style={styles.clientInfo}>
-          <View
-            style={[
-              styles.avatarPlaceholder,
-              { backgroundColor: getAvatarColor(item.full_name) },
-            ]}
-          >
-            <Text style={styles.avatarText}>{getInitials(item.full_name)}</Text>
-          </View>
+          {item.avatar_url ? (
+            <Image
+              source={{ uri: item.avatar_url }}
+              style={styles.avatarPlaceholder}
+            />
+          ) : (
+            <View
+              style={[
+                styles.avatarPlaceholder,
+                { backgroundColor: getAvatarColor(item.full_name) },
+              ]}
+            >
+              <Text style={styles.avatarText}>
+                {item.full_name?.charAt(0).toUpperCase()}
+              </Text>
+            </View>
+          )}
           <View style={styles.textContainer}>
             <Text style={styles.clientName}>{item.full_name}</Text>
             <View style={styles.statusRow}>

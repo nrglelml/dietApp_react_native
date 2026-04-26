@@ -19,7 +19,6 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useNavigation, useRoute } from "@react-navigation/native";
 import { supabase } from "../../../supabase";
 
-
 const TABS = ["Profil", "Program", "Öğünler", "Geçmiş"];
 
 const DAY_SHORTS = ["Pzt", "Sal", "Çar", "Per", "Cum", "Cmt", "Paz"];
@@ -86,7 +85,6 @@ const ClientDetail = () => {
   const [openDay, setOpenDay] = useState(null);
   const [pastPrograms, setPastPrograms] = useState([]);
   const [mealStats, setMealStats] = useState({ logged: 0, total: 0 });
-
 
   // Menü
   const [menuVisible, setMenuVisible] = useState(false);
@@ -216,8 +214,6 @@ const ClientDetail = () => {
       .limit(20);
     if (past) setPastPrograms(past);
   };
-
-
 
   // ─── PROGRAM SİL ────────────────────────────────────────
   const handleDeleteProgram = (program) => {
@@ -463,7 +459,6 @@ const ClientDetail = () => {
               </View>
             </View>
 
-            
             {programDays.map((dateStr) => {
               const dayMeals = currentMeals.filter(
                 (m) => m.meal_date === dateStr,
@@ -812,16 +807,23 @@ const ClientDetail = () => {
           <Ionicons name="chevron-back" size={24} color="#1C1C1E" />
         </TouchableOpacity>
         <View style={styles.headerCenter}>
-          <View
-            style={[
-              styles.avatar,
-              { backgroundColor: getAvatarColor(clientName) },
-            ]}
-          >
-            <Text style={styles.avatarText}>
-              {clientName?.charAt(0).toUpperCase()}
-            </Text>
-          </View>
+          {profile?.avatar_url ? (
+            <Image
+              source={{ uri: profile.avatar_url }}
+              style={styles.avatarImg}
+            />
+          ) : (
+            <View
+              style={[
+                styles.avatar,
+                { backgroundColor: getAvatarColor(clientName) },
+              ]}
+            >
+              <Text style={styles.avatarText}>
+                {clientName?.charAt(0).toUpperCase()}
+              </Text>
+            </View>
+          )}
           <View>
             <Text style={styles.headerName}>{clientName}</Text>
             <View style={styles.activeBadge}>
@@ -1124,7 +1126,7 @@ const styles = StyleSheet.create({
     paddingVertical: 5,
   },
   allergyTagText: { fontSize: 13, color: "#FF3B30", fontWeight: "600" },
-  avatarImg: { width: 40, height: 40, borderRadius: 20 },
+
   tagContainer: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   allergyTag: {
     backgroundColor: "#FFF0EE",
@@ -1196,7 +1198,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
- 
+
   dayAccordion: {
     backgroundColor: "#FFF",
     borderRadius: 16,
