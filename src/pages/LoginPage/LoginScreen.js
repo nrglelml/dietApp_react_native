@@ -236,11 +236,7 @@ const LoginScreen = ({ route }) => {
           </View>
         ) : null}
 
-        <TouchableOpacity onPress={handleForgotPassword}>
-          <View style={styles.tipBox}>
-            <Text style={styles.tipText}>Şifremi Unuttum</Text>
-          </View>
-        </TouchableOpacity>
+      
 
         <TouchableOpacity style={styles.mainButton} onPress={handleLogin}>
           <Text style={styles.buttonText}>Giriş Yap</Text>
@@ -252,6 +248,12 @@ const LoginScreen = ({ route }) => {
             <Text style={styles.girisText}>Hesap Oluşturun</Text>
           </TouchableOpacity>
         </View>
+        
+          <TouchableOpacity onPress={handleForgotPassword}>
+          <View style={styles.tipBox}>
+            <Text style={styles.tipText}>Şifremi Unuttum</Text>
+          </View>
+        </TouchableOpacity>
       </ScrollView>
     </KeyboardAvoidingView>
   );

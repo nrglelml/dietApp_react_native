@@ -68,20 +68,22 @@ export default StyleSheet.create({
     color:"black"
   },
 
-  tipBox: {
-    marginTop: 10,
-    marginLeft:230,
-    padding: 15,
-    backgroundColor: "#F0FDF4",
-    borderRadius: 15,
-    borderWidth: 1,
-    borderColor: "#BBF7D0",
-    //marginRight: 150,
-    width: 150,
-    //justifyContent: "center",
-    //alignItems: "center",
-  },
-  tipText: { color: "#166534", fontSize: 12, alignSelf: "center" },
+ tipBox: {
+  alignSelf: "flex-end",
+  marginRight: 20,
+  marginTop: 8,
+  paddingHorizontal: 16,
+  paddingVertical: 10,
+  backgroundColor: "#F0FDF4",
+  borderRadius: 12,
+  borderWidth: 1,
+  borderColor: "#BBF7D0",
+},
+tipText: { 
+  color: "#166534", 
+  fontSize: 13, 
+  fontWeight: "600" 
+},
 
   mainButton: {
     backgroundColor: "#22C55E",

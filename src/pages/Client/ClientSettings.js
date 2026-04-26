@@ -21,6 +21,9 @@ import * as ImagePicker from "expo-image-picker";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { supabase } from "../../../supabase";
 import { ClientTabBar } from "../../components";
+import { useNavigation } from "@react-navigation/native";
+
+
 
 const REMINDER_OPTIONS = [
   { label: "5 dakika önce", value: 5 },
@@ -53,6 +56,7 @@ const ClientSettings = ({ route }) => {
   const [saving, setSaving] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [userId, setUserId] = useState(null);
+  const navigation=useNavigation();
 
   const [profile, setProfile] = useState({
     full_name: "",
@@ -62,7 +66,6 @@ const ClientSettings = ({ route }) => {
     weight: "",
     target_weight: "",
     birth_date: "",
-    age: "",
     gender: "",
     allergies: [],
     disliked_foods: [],
@@ -75,7 +78,6 @@ const ClientSettings = ({ route }) => {
     weight: "",
     target_weight: "",
     birth_date: "",
-    age: "",
     gender: "",
   });
   const [localAvatar, setLocalAvatar] = useState(null);
@@ -132,7 +134,6 @@ const ClientSettings = ({ route }) => {
           weight: prof.weight ? String(prof.weight) : "",
           target_weight: prof.target_weight ? String(prof.target_weight) : "",
           birth_date: prof.birth_date || "",
-          age: prof.age ? String(prof.age) : "",
           gender: prof.gender || "",
           allergies: prof.allergies || [],
           disliked_foods: prof.disliked_foods || [],
@@ -145,7 +146,6 @@ const ClientSettings = ({ route }) => {
           weight: p.weight,
           target_weight: p.target_weight,
           birth_date: p.birth_date,
-          age: p.age,
           gender: p.gender,
         });
       }
@@ -169,6 +169,32 @@ const ClientSettings = ({ route }) => {
     await loadAll();
     setRefreshing(false);
   }, []);
+
+  // ─── ÇIKIŞ ────────────────────────────────────────────────────────────────
+  const handleLogout = () => {
+    Alert.alert(
+      "Çıkış Yap",
+      "Hesabınızdan çıkmak istediğinizden emin misiniz?",
+      [
+        { text: "İptal", style: "cancel" },
+        {
+          text: "Çıkış Yap",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await supabase.auth.signOut();
+              navigation.reset({
+                index: 0,
+                routes: [{ name: "Welcome" }],
+              });
+            } catch (error) {
+              console.error("Çıkış yapılırken hata oluştu:", error.message);
+            }
+          },
+        },
+      ],
+    );
+  };
 
   // ─── AVATAR ────────────────────────────────────────────────────────────────
 
@@ -247,7 +273,17 @@ const ClientSettings = ({ route }) => {
           ? parseFloat(profileForm.target_weight)
           : null,
         birth_date: profileForm.birth_date || null,
-        age: profileForm.age ? parseInt(profileForm.age) : null,
+        age: profileForm.birth_date
+          ? (() => {
+              const today = new Date();
+              const birth = new Date(profileForm.birth_date);
+              let age = today.getFullYear() - birth.getFullYear();
+              const m = today.getMonth() - birth.getMonth();
+              if (m < 0 || (m === 0 && today.getDate() < birth.getDate()))
+                age--;
+              return age;
+            })()
+          : null,
         gender: profileForm.gender || null,
       };
 
@@ -523,7 +559,6 @@ const ClientSettings = ({ route }) => {
               placeholder: "65",
               suffix: "kg",
             },
-            { key: "age", label: "Yaş", placeholder: "25", suffix: "yaş" },
           ].map((field, i) => (
             <View key={field.key}>
               {i > 0 && <Divider />}
@@ -561,6 +596,22 @@ const ClientSettings = ({ route }) => {
               <Ionicons name="calendar-outline" size={16} color="#8E8E93" />
             </TouchableOpacity>
           </View>
+          {/* Hesaplanan yaş göstergesi */}
+          {profileForm.birth_date && profileForm.age ? (
+            <View style={[styles.infoRow, { paddingTop: 0 }]}>
+              <Text
+                style={[styles.infoLabel, { color: "#8E8E93", fontSize: 13 }]}
+              >
+                Hesaplanan Yaş
+              </Text>
+              <Text
+                style={{ fontSize: 14, color: "#34C759", fontWeight: "700" }}
+              >
+                {profileForm.age} yaş
+              </Text>
+            </View>
+          ) : null}
+
           {showDatePicker && (
             <DateTimePicker
               value={
@@ -578,15 +629,55 @@ const ClientSettings = ({ route }) => {
                   const y = date.getFullYear();
                   const m = String(date.getMonth() + 1).padStart(2, "0");
                   const d = String(date.getDate()).padStart(2, "0");
+                  const birthDateStr = `${y}-${m}-${d}`;
+                  // Yaşı otomatik hesapla
+                  const today = new Date();
+                  let age = today.getFullYear() - y;
+                  if (
+                    today.getMonth() < date.getMonth() ||
+                    (today.getMonth() === date.getMonth() &&
+                      today.getDate() < date.getDate())
+                  ) {
+                    age--;
+                  }
                   setProfileForm((f) => ({
                     ...f,
-                    birth_date: `${y}-${m}-${d}`,
+                    birth_date: birthDateStr,
+                    age: String(age),
                   }));
                 }
               }}
             />
           )}
 
+          <Divider />
+          {/* Hesaplanan Yaş */}
+          {profileForm.birth_date ? (
+            <View style={styles.infoRow}>
+              <Text style={styles.infoLabel}>Yaş</Text>
+              <Text
+                style={[
+                  styles.infoSuffix,
+                  {
+                    color: "#1C1C1E",
+                    fontSize: 15,
+                    fontWeight: "700",
+                    width: "auto",
+                  },
+                ]}
+              >
+                {(() => {
+                  const today = new Date();
+                  const birth = new Date(profileForm.birth_date);
+                  let age = today.getFullYear() - birth.getFullYear();
+                  const m = today.getMonth() - birth.getMonth();
+                  if (m < 0 || (m === 0 && today.getDate() < birth.getDate()))
+                    age--;
+                  return age + " yaş";
+                })()}
+              </Text>
+            </View>
+          ) : null}
           <Divider />
           {/* Cinsiyet */}
           <View style={styles.infoRow}>
@@ -615,6 +706,19 @@ const ClientSettings = ({ route }) => {
           </View>
 
           {/* Kaydet butonu */}
+          <View style={{ padding: 14, paddingTop: 8 }}>
+            <TouchableOpacity
+              style={[styles.saveAllBtn, saving && { opacity: 0.6 }]}
+              onPress={saveProfile}
+              disabled={saving}
+            >
+              {saving ? (
+                <ActivityIndicator size="small" color="#FFF" />
+              ) : (
+                <Text style={styles.saveAllBtnText}>Bilgileri Kaydet</Text>
+              )}
+            </TouchableOpacity>
+          </View>
         </View>
 
         {/* ── ALERJİLER ─────────────────────────────────────────────────── */}
@@ -783,11 +887,17 @@ const ClientSettings = ({ route }) => {
             <Ionicons name="chevron-forward" size={16} color="#C7C7CC" />
           </TouchableOpacity>
         </View>
+{/* ── ÇIKIŞ ────────────────────────────────────────────────────── */}
+        <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout}>
+          <Ionicons name="log-out-outline" size={20} color="#FF3B30" />
+          <Text style={styles.logoutText}>Çıkış Yap</Text>
+        </TouchableOpacity>
 
         <View style={{ height: 100 }} />
       </ScrollView>
 
       <ClientTabBar />
+      
 
       {/* ── ÖLÇÜM MODAL ──────────────────────────────────────────────── */}
       <Modal
@@ -1327,6 +1437,9 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: "#F2F2F7",
   },
+  reminderOptionText: { fontSize: 15, color: "#1C1C1E" },
+  logoutBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, marginTop: 8, padding: 16, backgroundColor: "#FFF", borderRadius: 16, borderWidth: 1.5, borderColor: "#FF3B30" },
+  logoutText: { fontSize: 16, color: "#FF3B30", fontWeight: "700" },
   reminderOptionText: { fontSize: 15, color: "#1C1C1E" },
 });
 
