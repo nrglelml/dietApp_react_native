@@ -19,7 +19,7 @@ import {
   ClientSettings,
   ClientRecipes,
 } from "../pages";
-import { DietitianTabBar } from "../components";
+import { DietitianTabBar,PDFProgram } from "../components";
 export const navigationRef = createNavigationContainerRef();
 const RootStack = createNativeStackNavigator({
   screens: {
@@ -89,6 +89,10 @@ const RootStack = createNativeStackNavigator({
     },
     ClientRecipes: {
       screen: ClientRecipes,
+      options: { headerShown: false },
+    },
+    PDFProgram: {
+      screen: PDFProgram,
       options: { headerShown: false },
     },
   },

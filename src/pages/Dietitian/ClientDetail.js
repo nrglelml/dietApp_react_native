@@ -959,6 +959,21 @@ const ClientDetail = () => {
             <View style={styles.menuDivider} />
             <TouchableOpacity
               style={styles.menuItem}
+              onPress={() => {
+                setMenuVisible(false);
+                navigation.navigate("PDFProgram", { clientId, clientName });
+              }}
+            >
+              <Ionicons
+                name="document-text-outline"
+                size={20}
+                color="#AF52DE"
+              />
+              <Text style={styles.menuItemText}>PDF'den Program</Text>
+            </TouchableOpacity>
+            <View style={styles.menuDivider} />
+            <TouchableOpacity
+              style={styles.menuItem}
               onPress={handleRemoveClient}
             >
               <Ionicons
