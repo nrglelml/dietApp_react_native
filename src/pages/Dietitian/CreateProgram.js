@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import {
   View,
   Text,
@@ -50,21 +50,21 @@ LocaleConfig.locales["tr"] = {
     "Ara",
   ],
   dayNames: [
-    "Pazar",
     "Pazartesi",
     "Salı",
     "Çarşamba",
     "Perşembe",
     "Cuma",
     "Cumartesi",
+    "Pazar",
   ],
-  dayNamesShort: ["Paz", "Pzt", "Sal", "Çar", "Per", "Cum", "Cmt"],
+  dayNamesShort: ["Pzt", "Sal", "Çar", "Per", "Cum", "Cmt", "Paz"],
   today: "Bugün",
 };
 LocaleConfig.defaultLocale = "tr";
 
 const MEAL_TYPES = ["Kahvaltı", "Ara Öğün", "Öğle", "İkindi", "Akşam", "Gece"];
-const DAY_SHORTS = ["Pzt", "Sal", "Çar", "Per", "Cum", "Cmt", "Paz"];
+const DAY_SHORTS = ["Paz", "Pzt", "Sal", "Çar", "Per", "Cum", "Cmt"];
 
 const emptyMeal = () => ({
   id: Date.now() + Math.random(),
@@ -129,6 +129,15 @@ const CreateProgram = () => {
   const [openDay, setOpenDay] = useState(null);
   const [meals, setMeals] = useState({});
   const [saving, setSaving] = useState(false);
+
+  // Tarif seçici
+  const [recipeModalVisible, setRecipeModalVisible] = useState(false);
+  const [recipes, setRecipes] = useState([]);
+  const [recipeTargetDay, setRecipeTargetDay] = useState(null);
+  const [loadingRecipes, setLoadingRecipes] = useState(false);
+
+  // Önceki program kopyalama
+  const [copyingProgram, setCopyingProgram] = useState(false);
 
   // Time picker: hangi öğünün picker'ı açık
   const [activeTimePicker, setActiveTimePicker] = useState(null); // { dateStr, mealId }
@@ -317,6 +326,127 @@ const CreateProgram = () => {
     }
   };
 
+  // ─── TARİFLERİ YÜKlE ─────────────────────────────────────────
+  const openRecipeModal = async (dateStr) => {
+    setRecipeTargetDay(dateStr);
+    setRecipeModalVisible(true);
+    if (recipes.length > 0) return;
+    setLoadingRecipes(true);
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      const { data } = await supabase
+        .from("recipes")
+        .select("id, title, calories, prep_time, ingredients")
+        .eq("dietitian_id", user.id)
+        .order("created_at", { ascending: false });
+      setRecipes(data || []);
+    } catch (e) {
+      console.log(e);
+    } finally {
+      setLoadingRecipes(false);
+    }
+  };
+
+  const addMealFromRecipe = (recipe) => {
+    const newMeal = {
+      ...emptyMeal(),
+      meal_name: recipe.title,
+      calories: recipe.calories ? String(recipe.calories) : "",
+      notes:
+        recipe.ingredients
+          ?.map(
+            (i) =>
+              `${i.name}${i.amount ? " " + i.amount : ""}${i.unit ? " " + i.unit : ""}`,
+          )
+          .join(", ") || "",
+      showOptional: true,
+    };
+    setMeals((prev) => ({
+      ...prev,
+      [recipeTargetDay]: [...(prev[recipeTargetDay] || []), newMeal],
+    }));
+    setRecipeModalVisible(false);
+  };
+
+  // ─── ÖNCEKİ PROGRAMI KOPYALA ──────────────────────────────────
+  const copyLastProgram = async () => {
+    if (!startDate || !endDate) {
+      Alert.alert("Uyarı", "Önce program tarihlerini seçin.");
+      return;
+    }
+    setCopyingProgram(true);
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      const { data: lastProgram } = await supabase
+        .from("diet_programs")
+        .select("id, start_date, end_date, title")
+        .eq("client_id", clientId)
+        .order("end_date", { ascending: false })
+        .limit(1)
+        .single();
+
+      if (!lastProgram) {
+        Alert.alert("Bilgi", "Kopyalanacak önceki program bulunamadı.");
+        return;
+      }
+
+      const { data: lastMeals } = await supabase
+        .from("diet_meals")
+        .select("*")
+        .eq("program_id", lastProgram.id)
+        .order("meal_date")
+        .order("meal_time");
+
+      if (!lastMeals?.length) {
+        Alert.alert("Bilgi", "Önceki programda öğün bulunamadı.");
+        return;
+      }
+
+      // Tarihleri yeni programa kaydır
+      const oldStart = new Date(lastProgram.start_date + "T12:00:00");
+      const newStart = new Date(startDate + "T12:00:00");
+      const diffDays = Math.round(
+        (newStart - oldStart) / (1000 * 60 * 60 * 24),
+      );
+
+      const newMeals = {};
+      lastMeals.forEach((m) => {
+        const oldDate = new Date(m.meal_date + "T12:00:00");
+        oldDate.setDate(oldDate.getDate() + diffDays);
+        const y = oldDate.getFullYear();
+        const mo = String(oldDate.getMonth() + 1).padStart(2, "0");
+        const d = String(oldDate.getDate()).padStart(2, "0");
+        const newDateStr = `${y}-${mo}-${d}`;
+
+        if (newDateStr >= startDate && newDateStr <= endDate) {
+          if (!newMeals[newDateStr]) newMeals[newDateStr] = [];
+          newMeals[newDateStr].push({
+            ...emptyMeal(),
+            meal_type: m.meal_type || "",
+            meal_time: m.meal_time?.slice(0, 5) || "",
+            meal_name: m.meal_name,
+            calories: m.calories ? String(m.calories) : "",
+            portion: m.portion || "",
+            notes: m.notes || "",
+            showOptional: !!(m.calories || m.portion || m.notes),
+          });
+        }
+      });
+
+      setMeals(newMeals);
+      if (!programTitle) setProgramTitle(lastProgram.title);
+      Alert.alert("✓", "Önceki program kopyalandı. Düzenleyebilirsiniz.");
+    } catch (e) {
+      Alert.alert("Hata", e.message);
+    } finally {
+      setCopyingProgram(false);
+    }
+  };
+
   const renderMealCard = (dateStr, meal) => (
     <View key={meal.id} style={styles.mealCard}>
       <View style={styles.mealCardHeader}>
@@ -389,10 +519,14 @@ const CreateProgram = () => {
         <View style={[styles.inputWrapper, { flex: 2.2, marginLeft: 8 }]}>
           <Text style={styles.inputLabel}>Öğün Adı *</Text>
           <TextInput
-            style={styles.input}
-            placeholder="Yulaf ezmesi, muz..."
+            style={[
+              styles.input,
+              { minHeight: 52, textAlignVertical: "top", paddingTop: 10 },
+            ]}
+            placeholder="Yulaf ezmesi, muz, süt karıştırılacak..."
             value={meal.meal_name}
             onChangeText={(v) => updateMeal(dateStr, meal.id, "meal_name", v)}
+            multiline
           />
         </View>
       </View>
@@ -504,13 +638,24 @@ const CreateProgram = () => {
             ) : (
               dayMeals.map((meal) => renderMealCard(dateStr, meal))
             )}
-            <TouchableOpacity
-              style={styles.addMealBtn}
-              onPress={() => addMeal(dateStr)}
-            >
-              <Ionicons name="add-circle" size={20} color="#34C759" />
-              <Text style={styles.addMealText}>Öğün Ekle</Text>
-            </TouchableOpacity>
+            <View style={{ flexDirection: "row", gap: 8 }}>
+              <TouchableOpacity
+                style={[styles.addMealBtn, { flex: 1 }]}
+                onPress={() => addMeal(dateStr)}
+              >
+                <Ionicons name="add-circle" size={20} color="#34C759" />
+                <Text style={styles.addMealText}>Öğün Ekle</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.addMealBtn, { flex: 1, borderColor: "#007AFF" }]}
+                onPress={() => openRecipeModal(dateStr)}
+              >
+                <Ionicons name="book-outline" size={18} color="#007AFF" />
+                <Text style={[styles.addMealText, { color: "#007AFF" }]}>
+                  Tariften Ekle
+                </Text>
+              </TouchableOpacity>
+            </View>
           </View>
         )}
       </View>
@@ -535,17 +680,26 @@ const CreateProgram = () => {
             <Text style={styles.headerTitle}>Program Oluştur</Text>
             <Text style={styles.headerSubtitle}>{clientName}</Text>
           </View>
-          <TouchableOpacity
-            style={[styles.saveBtn, saving && { opacity: 0.7 }]}
-            onPress={handleSave}
-            disabled={saving}
-          >
-            {saving ? (
-              <ActivityIndicator size="small" color="#FFF" />
-            ) : (
+          <View style={{ flexDirection: "row", gap: 8 }}>
+            <TouchableOpacity
+              style={[styles.copyBtn, copyingProgram && { opacity: 0.6 }]}
+              onPress={copyLastProgram}
+              disabled={copyingProgram}
+            >
+              {copyingProgram ? (
+                <ActivityIndicator size="small" color="#007AFF" />
+              ) : (
+                <Ionicons name="copy-outline" size={18} color="#007AFF" />
+              )}
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.saveBtn, saving && { opacity: 0.7 }]}
+              onPress={handleSave}
+              disabled={saving}
+            >
               <Text style={styles.saveBtnText}>Kaydet</Text>
-            )}
-          </TouchableOpacity>
+            </TouchableOpacity>
+          </View>
         </View>
 
         <ScrollView
@@ -651,6 +805,68 @@ const CreateProgram = () => {
           <View style={{ height: 40 }} />
         </ScrollView>
       </KeyboardAvoidingView>
+
+      {/* TARİF SEÇİCİ MODAL */}
+      <Modal
+        visible={recipeModalVisible}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setRecipeModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { maxHeight: "75%" }]}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Tarif Seç</Text>
+              <TouchableOpacity onPress={() => setRecipeModalVisible(false)}>
+                <Ionicons name="close" size={24} color="#8E8E93" />
+              </TouchableOpacity>
+            </View>
+            {loadingRecipes ? (
+              <ActivityIndicator
+                size="large"
+                color="#34C759"
+                style={{ padding: 30 }}
+              />
+            ) : recipes.length === 0 ? (
+              <View style={{ padding: 30, alignItems: "center" }}>
+                <Ionicons name="restaurant-outline" size={40} color="#E5E5EA" />
+                <Text style={{ color: "#8E8E93", marginTop: 8 }}>
+                  Henüz tarif eklenmemiş
+                </Text>
+              </View>
+            ) : (
+              <ScrollView showsVerticalScrollIndicator={false}>
+                {recipes.map((recipe) => (
+                  <TouchableOpacity
+                    key={recipe.id}
+                    style={styles.recipeItem}
+                    onPress={() => addMealFromRecipe(recipe)}
+                  >
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.recipeItemTitle}>{recipe.title}</Text>
+                      <View
+                        style={{ flexDirection: "row", gap: 8, marginTop: 4 }}
+                      >
+                        {recipe.calories && (
+                          <Text style={styles.recipeItemMeta}>
+                            🔥 {recipe.calories} kcal
+                          </Text>
+                        )}
+                        {recipe.prep_time && (
+                          <Text style={styles.recipeItemMeta}>
+                            ⏱ {recipe.prep_time} dk
+                          </Text>
+                        )}
+                      </View>
+                    </View>
+                    <Ionicons name="add-circle" size={24} color="#34C759" />
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            )}
+          </View>
+        </View>
+      </Modal>
 
       {/* TAKVİM MODAL */}
       <Modal
@@ -975,6 +1191,24 @@ const styles = StyleSheet.create({
     marginTop: 12,
   },
   nextBtnText: { color: "#FFF", fontWeight: "700", fontSize: 15 },
+  copyBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: "#EEF4FF",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  recipeItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: "#F2F2F7",
+  },
+  recipeItemTitle: { fontSize: 15, fontWeight: "600", color: "#1C1C1E" },
+  recipeItemMeta: { fontSize: 12, color: "#8E8E93" },
 });
 
 export default CreateProgram;
