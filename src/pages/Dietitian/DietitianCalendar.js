@@ -301,6 +301,91 @@ const DietitianCalendar = () => {
       }
 
       const savedDate = form.appointment_date;
+      // ── BİLDİRİMLER ──────────────────────────────────────────
+      try {
+        const { data: dytSettings } = await supabase
+          .from("dietitian_settings")
+          .select("push_token, notif_appointment, notif_appointment_before")
+          .eq("dietitian_id", user.id)
+          .single();
+
+        const { data: clientProf } = await supabase
+          .from("client_profiles")
+          .select("push_token, full_name, meal_notif_before")
+          .eq("id", form.client_id)
+          .single();
+
+        const apptDateTimeStr = `${form.appointment_date}T${form.appointment_time}:00`;
+        const apptDateTime = new Date(apptDateTimeStr);
+
+        // Danışana anlık bildirim
+        if (clientProf?.push_token) {
+          await supabase.functions.invoke("send-push-notification", {
+            body: {
+              token: clientProf.push_token,
+              title:
+                "📅 Randevu " + (editingId ? "Güncellendi" : "Oluşturuldu"),
+              body: `${form.appointment_date} saat ${form.appointment_time} için randevunuz ${editingId ? "güncellendi" : "oluşturuldu"}`,
+              data: { type: "appointment" },
+            },
+          });
+
+          // Danışana zamanlanmış hatırlatma
+          if (clientProf.meal_notif_before && apptDateTime > new Date()) {
+            const Notifications = require("expo-notifications");
+            const triggerDate = new Date(
+              apptDateTime.getTime() - clientProf.meal_notif_before * 60 * 1000,
+            );
+            if (triggerDate > new Date()) {
+              await Notifications.scheduleNotificationAsync({
+                content: {
+                  title: "📅 Randevu Hatırlatması",
+                  body: `${clientProf.full_name || "Danışanınız"} ile randevunuz ${clientProf.meal_notif_before} dakika sonra`,
+                  sound: true,
+                },
+                trigger: { date: triggerDate, channelId: "appointments" },
+              });
+            }
+          }
+        }
+
+        // Diyetisyene anlık bildirim
+        if (dytSettings?.notif_appointment && dytSettings?.push_token) {
+          await supabase.functions.invoke("send-push-notification", {
+            body: {
+              token: dytSettings.push_token,
+              title:
+                "📅 Randevu " + (editingId ? "Güncellendi" : "Oluşturuldu"),
+              body: `${form.clientName} ile ${form.appointment_date} saat ${form.appointment_time} randevusu ${editingId ? "güncellendi" : "oluşturuldu"}`,
+              data: { type: "appointment" },
+            },
+          });
+
+          // Diyetisyene zamanlanmış hatırlatma
+          if (
+            dytSettings.notif_appointment_before &&
+            apptDateTime > new Date()
+          ) {
+            const Notifications = require("expo-notifications");
+            const triggerDate = new Date(
+              apptDateTime.getTime() -
+                dytSettings.notif_appointment_before * 60 * 1000,
+            );
+            if (triggerDate > new Date()) {
+              await Notifications.scheduleNotificationAsync({
+                content: {
+                  title: "📅 Randevu Hatırlatması",
+                  body: `${form.clientName} ile randevunuz ${dytSettings.notif_appointment_before} dakika sonra`,
+                  sound: true,
+                },
+                trigger: { date: triggerDate, channelId: "appointments" },
+              });
+            }
+          }
+        }
+      } catch (notifErr) {
+        console.log("Bildirim hatası:", notifErr.message);
+      }
       setModalVisible(false);
       await fetchAppointments();
       // Kaydedilen tarihe git

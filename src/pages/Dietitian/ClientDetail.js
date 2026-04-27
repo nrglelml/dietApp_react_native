@@ -13,6 +13,7 @@ import {
   Modal,
   Image,
   TextInput,
+  KeyboardAvoidingView,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -114,7 +115,6 @@ const ClientDetail = () => {
           "*, diet_meals(meal_name, meal_date, meal_time, notes), meal_reactions(*)",
         )
         .eq("client_id", clientId)
-        .not("photo_url", "is", null)
         .order("logged_at", { ascending: false })
         .limit(50);
       setMealLogsList(logs || []);
@@ -140,6 +140,30 @@ const ClientDetail = () => {
         reaction_type: emoji ? "emoji" : "message",
         content,
       });
+      // Danışanın push token'ını çek
+      const { data: clientProfile } = await supabase
+        .from("client_profiles")
+        .select("push_token")
+        .eq("id", clientId)
+        .single();
+
+      // Firebase ile push bildirimi /supase navigation üzerinden
+      try {
+        const { data: fcmResult, error: fcmError } =
+          await supabase.functions.invoke("send-push-notification", {
+            body: {
+              token: clientProfile.push_token,
+              title: "💬 Diyetisyeninizden mesaj",
+              body: emoji
+                ? `${clientName} öğününüze ${content} tepkisi verdi`
+                : `${clientName}: ${content}`,
+              data: { type: "reaction", mealLogId: selectedLog.id },
+            },
+          });
+        console.log("FCM sonuç:", JSON.stringify(fcmResult), fcmError?.message);
+      } catch (e) {
+        console.log("FCM hata:", e.message);
+      }
       setReactionText("");
       if (!emoji) setReactionModal(false);
       await fetchMealLogs();
@@ -197,7 +221,20 @@ const ClientDetail = () => {
         .order("meal_time");
       if (meals) {
         setCurrentMeals(meals);
-        setMealStats({ logged: 0, total: meals.length });
+
+        // Yedim olarak işaretlenen öğünleri say
+        const mealIds = meals.map((m) => m.id);
+        const { data: logs } = await supabase
+          .from("meal_logs")
+          .select("meal_id, status")
+          .eq("client_id", clientId)
+          .eq("status", "eaten")
+          .in("meal_id", mealIds);
+
+        setMealStats({
+          logged: logs?.length || 0,
+          total: meals.length,
+        });
       }
     } else {
       setCurrentProgram(null);
@@ -873,64 +910,73 @@ const ClientDetail = () => {
         animationType="slide"
         onRequestClose={() => setReactionModal(false)}
       >
-        <View style={styles.reactionModalOverlay}>
-          <TouchableOpacity
-            style={{ flex: 1 }}
-            onPress={() => setReactionModal(false)}
-          />
-          <View style={styles.reactionModal}>
-            <View style={styles.reactionModalHeader}>
-              <Text style={styles.reactionModalTitle}>Mesaj Gönder</Text>
-              <TouchableOpacity onPress={() => setReactionModal(false)}>
-                <Ionicons name="close" size={24} color="#8E8E93" />
-              </TouchableOpacity>
-            </View>
-            {selectedLog?.photo_url && (
-              <Image
-                source={{ uri: selectedLog.photo_url }}
-                style={styles.reactionPreviewPhoto}
-                resizeMode="cover"
-              />
-            )}
-            <Text style={styles.reactionMealName}>
-              {selectedLog?.diet_meals?.meal_name}
-            </Text>
-            <View style={styles.emojiRow}>
-              {["👍", "❤️", "🎉", "💪", "⭐", "😊", "🔥", "👏"].map((emoji) => (
-                <TouchableOpacity
-                  key={emoji}
-                  style={styles.emojiPickerBtn}
-                  onPress={() => sendReaction(emoji)}
-                >
-                  <Text style={{ fontSize: 24 }}>{emoji}</Text>
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+        >
+          <View style={styles.reactionModalOverlay}>
+            <TouchableOpacity
+              style={{ flex: 1 }}
+              onPress={() => setReactionModal(false)}
+            />
+            <View style={styles.reactionModal}>
+              <View style={styles.reactionModalHeader}>
+                <Text style={styles.reactionModalTitle}>Mesaj Gönder</Text>
+                <TouchableOpacity onPress={() => setReactionModal(false)}>
+                  <Ionicons name="close" size={24} color="#8E8E93" />
                 </TouchableOpacity>
-              ))}
-            </View>
-            <View style={styles.reactionInputRow}>
-              <TextInput
-                style={styles.reactionInput}
-                placeholder="Mesaj yaz..."
-                value={reactionText}
-                onChangeText={setReactionText}
-                multiline
-              />
-              <TouchableOpacity
-                style={[
-                  styles.reactionSendBtn,
-                  (!reactionText.trim() || sendingReaction) && { opacity: 0.5 },
-                ]}
-                onPress={() => sendReaction()}
-                disabled={!reactionText.trim() || sendingReaction}
-              >
-                {sendingReaction ? (
-                  <ActivityIndicator size="small" color="#FFF" />
-                ) : (
-                  <Ionicons name="send" size={18} color="#FFF" />
+              </View>
+              {selectedLog?.photo_url && (
+                <Image
+                  source={{ uri: selectedLog.photo_url }}
+                  style={styles.reactionPreviewPhoto}
+                  resizeMode="cover"
+                />
+              )}
+              <Text style={styles.reactionMealName}>
+                {selectedLog?.diet_meals?.meal_name}
+              </Text>
+              <View style={styles.emojiRow}>
+                {["👍", "❤️", "🎉", "💪", "⭐", "😊", "🔥", "👏"].map(
+                  (emoji) => (
+                    <TouchableOpacity
+                      key={emoji}
+                      style={styles.emojiPickerBtn}
+                      onPress={() => sendReaction(emoji)}
+                    >
+                      <Text style={{ fontSize: 24 }}>{emoji}</Text>
+                    </TouchableOpacity>
+                  ),
                 )}
-              </TouchableOpacity>
+              </View>
+              <View style={styles.reactionInputRow}>
+                <TextInput
+                  style={styles.reactionInput}
+                  placeholder="Mesaj yaz..."
+                  value={reactionText}
+                  onChangeText={setReactionText}
+                  multiline
+                />
+                <TouchableOpacity
+                  style={[
+                    styles.reactionSendBtn,
+                    (!reactionText.trim() || sendingReaction) && {
+                      opacity: 0.5,
+                    },
+                  ]}
+                  onPress={() => sendReaction()}
+                  disabled={!reactionText.trim() || sendingReaction}
+                >
+                  {sendingReaction ? (
+                    <ActivityIndicator size="small" color="#FFF" />
+                  ) : (
+                    <Ionicons name="send" size={18} color="#FFF" />
+                  )}
+                </TouchableOpacity>
+              </View>
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* ... MENÜ MODAL */}

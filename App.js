@@ -37,14 +37,18 @@ export default function App() {
       if (url.includes("dietapp://approve")) {
         hasDeepLink.current = true;
 
-        const urlObj = new URL(url.replace("dietapp://", "https://dietapp.com/"));
+        const urlObj = new URL(
+          url.replace("dietapp://", "https://dietapp.com/"),
+        );
         const params = {
           dietitianId: urlObj.searchParams.get("dietitianId"),
           dietitianName: urlObj.searchParams.get("dietitianName"),
           targetEmail: urlObj.searchParams.get("targetEmail"),
         };
 
-        const { data: { session } } = await supabase.auth.getSession();
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
 
         if (navigationRef.isReady()) {
           if (session) {
@@ -52,13 +56,15 @@ export default function App() {
           } else {
             navigationRef.reset({
               index: 0,
-              routes: [{
-                name: "Login",
-                params: {
-                  redirectTo: "ApprovalScreen",
-                  redirectParams: params,
+              routes: [
+                {
+                  name: "Login",
+                  params: {
+                    redirectTo: "ApprovalScreen",
+                    redirectParams: params,
+                  },
                 },
-              }],
+              ],
             });
           }
         } else {
@@ -73,7 +79,9 @@ export default function App() {
         const url = await Linking.getInitialURL();
         if (url) await handleDeepLink(url);
 
-        const { data: { session } } = await supabase.auth.getSession();
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
 
         if (session && !hasDeepLink.current) {
           const { data: profile, error } = await supabase
@@ -84,7 +92,7 @@ export default function App() {
 
           if (!error && profile) {
             setInitialRoute(
-              profile.role === "dietitian" ? "HomeDyt" : "HomeClient"
+              profile.role === "dietitian" ? "HomeDyt" : "HomeClient",
             );
           }
         }
@@ -129,13 +137,15 @@ export default function App() {
         } else {
           navigationRef.reset({
             index: 0,
-            routes: [{
-              name: "Login",
-              params: {
-                redirectTo: "ApprovalScreen",
-                redirectParams: params,
+            routes: [
+              {
+                name: "Login",
+                params: {
+                  redirectTo: "ApprovalScreen",
+                  redirectParams: params,
+                },
               },
-            }],
+            ],
           });
         }
       }, 100);

@@ -13,12 +13,11 @@ import { supabase } from "../../../supabase";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useNavigation } from "@react-navigation/native";
 
-
-const ApprovalScreen = ({ route}) => {
+const ApprovalScreen = ({ route }) => {
   const { dietitianId, dietitianName, targetEmail } = route.params || {};
   const [loading, setLoading] = useState(false);
   const [currentUserEmail, setCurrentUserEmail] = useState("");
-    const navigation = useNavigation();
+  const navigation = useNavigation();
 
   useEffect(() => {
     checkUserSession();
@@ -82,6 +81,30 @@ const ApprovalScreen = ({ route}) => {
           .eq("id", user.id);
 
         if (error) throw error;
+        // ── DİYETİSYENE BİLDİRİM ──────────────────────────────
+        try {
+          const { data: dytSettings } = await supabase
+            .from("dietitian_settings")
+            .select("push_token, notif_new_client")
+            .eq("dietitian_id", dietitianId)
+            .single();
+
+          if (
+            dytSettings?.push_token &&
+            dytSettings?.notif_new_client !== false
+          ) {
+            await supabase.functions.invoke("send-push-notification", {
+              body: {
+                token: dytSettings.push_token,
+                title: "🎉 Yeni Danışan",
+                body: `${user.email} daveti kabul etti ve danışanınız oldu.`,
+                data: { type: "new_client" },
+              },
+            });
+          }
+        } catch (notifErr) {
+          console.log("Bildirim hatası:", notifErr.message);
+        }
 
         Alert.alert(
           "Eşleşme Tamamlandı! 🎉",

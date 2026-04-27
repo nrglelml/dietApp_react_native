@@ -11,6 +11,7 @@ import {
   RefreshControl,
   Dimensions,
   Alert,
+  Image,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -179,11 +180,36 @@ const HomeClient = () => {
       } = await supabase.auth.getUser();
       if (!user) return;
 
+      // ── PUSH TOKEN KAYDET ──────────────────────────────
+      try {
+        const Notifications = require("expo-notifications");
+        const Device = require("expo-device");
+        if (Device.isDevice) {
+          const { status } = await Notifications.getPermissionsAsync();
+          let finalStatus = status;
+          if (status !== "granted") {
+            const { status: newStatus } =
+              await Notifications.requestPermissionsAsync();
+            finalStatus = newStatus;
+          }
+          if (finalStatus === "granted") {
+            const tokenData = await Notifications.getDevicePushTokenAsync();
+            if (tokenData?.data) {
+              await supabase
+                .from("client_profiles")
+                .update({ push_token: tokenData.data })
+                .eq("id", user.id);
+            }
+          }
+        }
+      } catch (tokenErr) {
+        console.log("Token kayıt hatası:", tokenErr.message);
+      }
       // Profil
       const { data: profile } = await supabase
         .from("client_profiles")
         .select(
-          "full_name, weight, target_weight, height, birth_date, age, gender",
+          "full_name, weight, target_weight, height, birth_date, age, gender,avatar_url",
         )
         .eq("id", user.id)
         .single();
@@ -376,7 +402,29 @@ const HomeClient = () => {
             style={styles.avatarBtn}
             onPress={() => navigation.navigate("ClientSettings")}
           >
-            <Ionicons name="person-circle-outline" size={40} color="#34C759" />
+            {clientData?.avatar_url ? (
+              <Image
+                source={{ uri: clientData.avatar_url }}
+                style={{ width: 40, height: 40, borderRadius: 20 }}
+              />
+            ) : (
+              <View
+                style={{
+                  width: 40,
+                  height: 40,
+                  borderRadius: 20,
+                  backgroundColor: "#E5F9ED",
+                  justifyContent: "center",
+                  alignItems: "center",
+                }}
+              >
+                <Text
+                  style={{ fontSize: 16, fontWeight: "800", color: "#34C759" }}
+                >
+                  {clientName ? clientName[0].toUpperCase() : "D"}
+                </Text>
+              </View>
+            )}
           </TouchableOpacity>
         </View>
 
@@ -655,10 +703,18 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "center",
     marginBottom: 16,
+    width: "%100",
   },
-  greeting: { fontSize: 13, color: "#8E8E93" },
+  greeting: {
+    fontSize: 13,
+    color: "#8E8E93",
+  },
   name: { fontSize: 22, fontWeight: "800", color: "#1C1C1E" },
-  avatarBtn: { padding: 4 },
+  avatarBtn: {
+    //width: 70,
+    //  height: 70,
+    //  borderRadius: 35
+  },
 
   statsRow: { flexDirection: "row", gap: 10, marginBottom: 12 },
   statCard: {

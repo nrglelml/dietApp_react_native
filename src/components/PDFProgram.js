@@ -385,6 +385,28 @@ const PDFProgram = () => {
           .insert(allMeals);
         if (mealsError) throw mealsError;
       }
+      // ── DANIŞANA BİLDİRİM ──────────────────────────────────
+      try {
+        const { data: clientProf } = await supabase
+          .from("client_profiles")
+          .select("push_token, full_name")
+          .eq("id", clientId)
+          .single();
+
+        if (clientProf?.push_token) {
+          await supabase.functions.invoke("send-push-notification", {
+            body: {
+              token: clientProf.push_token,
+              title: "🥗 Yeni Diyet Programı",
+              body: `${formatDateTR(startDate)} - ${formatDateTR(endDate)} tarihleri için yeni programınız hazır!`,
+              data: { type: "new_program" },
+            },
+          });
+        }
+      } catch (notifErr) {
+        console.log("Bildirim hatası:", notifErr.message);
+      }
+
       Alert.alert(
         "Program Oluşturuldu! 🎉",
         `${clientName} için diyet programı kaydedildi.\n${formatDateTR(startDate)} — ${formatDateTR(endDate)}`,

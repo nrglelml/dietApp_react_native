@@ -13,6 +13,7 @@ import {
   Alert,
   RefreshControl,
   Image,
+  KeyboardAvoidingView,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -317,6 +318,46 @@ const ClientCalendar = () => {
       } else {
         await supabase.from("meal_logs").insert(payload);
       }
+      // ── DİYETİSYENE BİLDİRİM ──────────────────────────────
+      try {
+        // Danışanın diyetisyenini bul
+        const { data: clientProf } = await supabase
+          .from("client_profiles")
+          .select("dietitian_id, full_name")
+          .eq("id", clientId)
+          .single();
+        console.log(
+          "clientProf:",
+          JSON.stringify(clientProf),
+          "clientId:",
+          clientId,
+        );
+        if (clientProf?.dietitian_id) {
+          const { data: dytSettings } = await supabase
+            .from("dietitian_settings")
+            .select("push_token")
+            .eq("dietitian_id", clientProf.dietitian_id)
+            .single();
+          console.log("dytSettings:", JSON.stringify(dytSettings));
+          if (dytSettings?.push_token) {
+            const statusText = logStatus === "eaten" ? "✅ yedi" : "❌ yemedi";
+            await supabase.functions.invoke("send-push-notification", {
+              body: {
+                token: dytSettings.push_token,
+                title: "🍽 Öğün Güncellendi",
+                body: `${clientProf.full_name} ${selectedMeal.meal_name} öğününü ${statusText}`,
+                data: { type: "meal_log", clientId },
+              },
+            });
+            console.log(
+              "Log kaydedildi, bildirim gönderiliyor, clientId:",
+              clientId,
+            );
+          }
+        }
+      } catch (notifErr) {
+        console.log("Bildirim hatası:", notifErr.message);
+      }
 
       setLogModalVisible(false);
       await fetchDayData();
@@ -610,163 +651,187 @@ const ClientCalendar = () => {
         animationType="slide"
         onRequestClose={() => setLogModalVisible(false)}
       >
-        <View style={styles.modalOverlay}>
-          <TouchableOpacity
-            style={{ flex: 1 }}
-            onPress={() => setLogModalVisible(false)}
-          />
-          <View style={styles.logModal}>
-            <View style={styles.logModalHeader}>
-              <Text style={styles.logModalTitle}>
-                {selectedMeal?.meal_name}
-              </Text>
-              <TouchableOpacity onPress={() => setLogModalVisible(false)}>
-                <Ionicons name="close" size={24} color="#8E8E93" />
-              </TouchableOpacity>
-            </View>
-
-            {selectedMeal?.notes && (
-              <Text style={styles.logModalNotes}>{selectedMeal.notes}</Text>
-            )}
-
-            {/* Diyetisyen Reaksiyonları */}
-            {mealLogs[selectedMeal?.id]?.meal_reactions?.length > 0 && (
-              <View style={styles.dytReactions}>
-                <Text style={styles.dytReactionsLabel}>💬 Diyetisyen</Text>
-                {mealLogs[selectedMeal?.id]?.meal_reactions.map((r) => (
-                  <View
-                    key={r.id}
-                    style={[
-                      styles.dytReactionBubble,
-                      r.reaction_type === "emoji"
-                        ? styles.dytEmoji
-                        : styles.dytMessage,
-                    ]}
-                  >
-                    <Text
-                      style={
-                        r.reaction_type === "emoji"
-                          ? styles.dytEmojiText
-                          : styles.dytMessageText
-                      }
-                    >
-                      {r.content}
-                    </Text>
-                  </View>
-                ))}
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+        >
+          <View style={styles.modalOverlay}>
+            <TouchableOpacity
+              style={{ flex: 1 }}
+              onPress={() => setLogModalVisible(false)}
+            />
+            <View style={[styles.logModal, { maxHeight: "90%" }]}>
+              <View style={styles.logModalHeader}>
+                <Text style={styles.logModalTitle}>
+                  {selectedMeal?.meal_name}
+                </Text>
+                <TouchableOpacity onPress={() => setLogModalVisible(false)}>
+                  <Ionicons name="close" size={24} color="#8E8E93" />
+                </TouchableOpacity>
               </View>
-            )}
 
-            {/* Durum seçimi */}
-            <Text style={styles.logFieldLabel}>Durum</Text>
-            <View style={styles.statusRow}>
-              {[
-                {
-                  value: "eaten",
-                  label: "Yedim",
-                  icon: "checkmark-circle",
-                  color: "#34C759",
-                },
-                {
-                  value: "skipped",
-                  label: "Yemedim",
-                  icon: "close-circle",
-                  color: "#FF3B30",
-                },
-              ].map((s) => (
-                <TouchableOpacity
-                  key={s.value}
-                  style={[
-                    styles.statusBtn,
-                    logStatus === s.value && {
-                      borderColor: s.color,
-                      backgroundColor: s.color + "12",
-                    },
-                  ]}
-                  onPress={() => setLogStatus(s.value)}
-                >
-                  <Ionicons
-                    name={s.icon}
-                    size={20}
-                    color={logStatus === s.value ? s.color : "#C7C7CC"}
-                  />
-                  <Text
-                    style={[
-                      styles.statusBtnText,
-                      { color: logStatus === s.value ? s.color : "#8E8E93" },
-                    ]}
-                  >
-                    {s.label}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-
-            {/* Notlar */}
-            <Text style={styles.logFieldLabel}>Porsiyon / Miktar Notu</Text>
-            <TextInput
-              style={styles.logInput}
-              placeholder="Örn: Yarım porsiyon yedim..."
-              value={portionNote}
-              onChangeText={setPortionNote}
-              multiline
-            />
-
-            <Text style={styles.logFieldLabel}>Değişiklik Notu</Text>
-            <TextInput
-              style={styles.logInput}
-              placeholder="Örn: Tavuk yerine balık yedim..."
-              value={changeNote}
-              onChangeText={setChangeNote}
-              multiline
-            />
-
-            {/* Fotoğraf */}
-            <Text style={styles.logFieldLabel}>Öğün Fotoğrafı</Text>
-            <TouchableOpacity style={styles.photoPickerBtn} onPress={pickPhoto}>
-              {localPhoto || mealLogs[selectedMeal?.id]?.photo_url ? (
-                <Image
-                  source={{
-                    uri: localPhoto || mealLogs[selectedMeal?.id]?.photo_url,
-                  }}
-                  style={styles.photoPreview}
-                />
-              ) : (
-                <View style={styles.photoPlaceholder}>
-                  <Ionicons name="camera-outline" size={24} color="#8E8E93" />
-                  <Text style={styles.photoPlaceholderText}>
-                    Fotoğraf Ekle (opsiyonel)
-                  </Text>
-                </View>
-              )}
-            </TouchableOpacity>
-
-            <View style={styles.logModalBtns}>
-              {mealLogs[selectedMeal?.id] && (
-                <TouchableOpacity
-                  style={styles.deleteLogBtn}
-                  onPress={deleteLog}
-                >
-                  <Ionicons name="trash-outline" size={16} color="#FF3B30" />
-                </TouchableOpacity>
-              )}
-              <TouchableOpacity
-                style={[
-                  styles.saveLogBtn,
-                  (savingLog || uploadingPhoto) && { opacity: 0.6 },
-                ]}
-                onPress={saveLog}
-                disabled={savingLog || uploadingPhoto}
+              <ScrollView
+                showsVerticalScrollIndicator={false}
+                keyboardShouldPersistTaps="handled"
               >
-                {savingLog ? (
-                  <ActivityIndicator size="small" color="#FFF" />
-                ) : (
-                  <Text style={styles.saveLogBtnText}>Kaydet</Text>
+                {selectedMeal?.notes && (
+                  <Text style={styles.logModalNotes}>{selectedMeal.notes}</Text>
                 )}
-              </TouchableOpacity>
+
+                {/* Diyetisyen Reaksiyonları */}
+                {mealLogs[selectedMeal?.id]?.meal_reactions?.length > 0 && (
+                  <View style={styles.dytReactions}>
+                    <Text style={styles.dytReactionsLabel}>💬 Diyetisyen</Text>
+                    {mealLogs[selectedMeal?.id]?.meal_reactions.map((r) => (
+                      <View
+                        key={r.id}
+                        style={[
+                          styles.dytReactionBubble,
+                          r.reaction_type === "emoji"
+                            ? styles.dytEmoji
+                            : styles.dytMessage,
+                        ]}
+                      >
+                        <Text
+                          style={
+                            r.reaction_type === "emoji"
+                              ? styles.dytEmojiText
+                              : styles.dytMessageText
+                          }
+                        >
+                          {r.content}
+                        </Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
+
+                {/* Durum seçimi */}
+                <Text style={styles.logFieldLabel}>Durum</Text>
+                <View style={styles.statusRow}>
+                  {[
+                    {
+                      value: "eaten",
+                      label: "Yedim",
+                      icon: "checkmark-circle",
+                      color: "#34C759",
+                    },
+                    {
+                      value: "skipped",
+                      label: "Yemedim",
+                      icon: "close-circle",
+                      color: "#FF3B30",
+                    },
+                  ].map((s) => (
+                    <TouchableOpacity
+                      key={s.value}
+                      style={[
+                        styles.statusBtn,
+                        logStatus === s.value && {
+                          borderColor: s.color,
+                          backgroundColor: s.color + "12",
+                        },
+                      ]}
+                      onPress={() => setLogStatus(s.value)}
+                    >
+                      <Ionicons
+                        name={s.icon}
+                        size={20}
+                        color={logStatus === s.value ? s.color : "#C7C7CC"}
+                      />
+                      <Text
+                        style={[
+                          styles.statusBtnText,
+                          {
+                            color: logStatus === s.value ? s.color : "#8E8E93",
+                          },
+                        ]}
+                      >
+                        {s.label}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+
+                {/* Notlar */}
+                <Text style={styles.logFieldLabel}>Porsiyon / Miktar Notu</Text>
+                <TextInput
+                  style={styles.logInput}
+                  placeholder="Örn: Yarım porsiyon yedim..."
+                  value={portionNote}
+                  onChangeText={setPortionNote}
+                  multiline
+                />
+
+                <Text style={styles.logFieldLabel}>Değişiklik Notu</Text>
+                <TextInput
+                  style={styles.logInput}
+                  placeholder="Örn: Tavuk yerine balık yedim..."
+                  value={changeNote}
+                  onChangeText={setChangeNote}
+                  multiline
+                />
+
+                {/* Fotoğraf */}
+                <Text style={styles.logFieldLabel}>Öğün Fotoğrafı</Text>
+                <TouchableOpacity
+                  style={styles.photoPickerBtn}
+                  onPress={pickPhoto}
+                >
+                  {localPhoto || mealLogs[selectedMeal?.id]?.photo_url ? (
+                    <Image
+                      source={{
+                        uri:
+                          localPhoto || mealLogs[selectedMeal?.id]?.photo_url,
+                      }}
+                      style={styles.photoPreview}
+                    />
+                  ) : (
+                    <View style={styles.photoPlaceholder}>
+                      <Ionicons
+                        name="camera-outline"
+                        size={24}
+                        color="#8E8E93"
+                      />
+                      <Text style={styles.photoPlaceholderText}>
+                        Fotoğraf Ekle (opsiyonel)
+                      </Text>
+                    </View>
+                  )}
+                </TouchableOpacity>
+
+                <View style={styles.logModalBtns}>
+                  {mealLogs[selectedMeal?.id] && (
+                    <TouchableOpacity
+                      style={styles.deleteLogBtn}
+                      onPress={deleteLog}
+                    >
+                      <Ionicons
+                        name="trash-outline"
+                        size={16}
+                        color="#FF3B30"
+                      />
+                    </TouchableOpacity>
+                  )}
+                  <TouchableOpacity
+                    style={[
+                      styles.saveLogBtn,
+                      (savingLog || uploadingPhoto) && { opacity: 0.6 },
+                    ]}
+                    onPress={saveLog}
+                    disabled={savingLog || uploadingPhoto}
+                  >
+                    {savingLog ? (
+                      <ActivityIndicator size="small" color="#FFF" />
+                    ) : (
+                      <Text style={styles.saveLogBtnText}>Kaydet</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </ScrollView>
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
     </SafeAreaView>
   );

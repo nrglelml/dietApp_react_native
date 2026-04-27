@@ -212,6 +212,33 @@ const HomeDyt = () => {
         .eq("id", user.id)
         .single();
       if (profile) setDietitianName(profile.full_name);
+      // ── DİYETİSYEN PUSH TOKEN KAYDET ──────────────────────
+      try {
+        const Notifications = require("expo-notifications");
+        const Device = require("expo-device");
+        if (Device.isDevice) {
+          const { status } = await Notifications.getPermissionsAsync();
+          let finalStatus = status;
+          if (status !== "granted") {
+            const { status: newStatus } =
+              await Notifications.requestPermissionsAsync();
+            finalStatus = newStatus;
+          }
+          if (finalStatus === "granted") {
+            const tokenData = await Notifications.getDevicePushTokenAsync();
+            if (tokenData?.data) {
+              await supabase
+                .from("dietitian_settings")
+                .upsert(
+                  { dietitian_id: user.id, push_token: tokenData.data },
+                  { onConflict: "dietitian_id" },
+                );
+            }
+          }
+        }
+      } catch (tokenErr) {
+        console.log("Diyetisyen token hatası:", tokenErr.message);
+      }
       await fetchClients(user.id);
     } catch (error) {
       console.error("Yükleme hatası:", error.message);

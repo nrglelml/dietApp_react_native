@@ -6,12 +6,12 @@ import { supabase } from "../../supabase";
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
-    shouldShowAlert: true,
+    shouldShowBanner: true,
+    shouldShowList: true,
     shouldPlaySound: true,
     shouldSetBadge: true,
   }),
 });
-
 // ─── İZİN + TOKEN ─────────────────────────────────────────────────────────────
 
 export const registerForPushNotifications = async () => {
@@ -49,7 +49,7 @@ export const registerForPushNotifications = async () => {
   }
 
   try {
-    const tokenData = await Notifications.getExpoPushTokenAsync();
+    const tokenData = await Notifications.getDevicePushTokenAsync();
     return tokenData.data;
   } catch (e) {
     console.log("Token alınamadı:", e.message);
@@ -141,7 +141,29 @@ export const scheduleAppointmentReminder = async ({
   // Bildirim ID'sini sakla (iptal için)
   return id;
 };
+// ─── PUSH TO SELF ─────────────────────────────────────────────────────────────
+const sendPushToSelf = async (title, body, data = {}) => {
+  try {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return;
 
+    const { data: settings } = await supabase
+      .from("dietitian_settings")
+      .select("push_token")
+      .eq("dietitian_id", user.id)
+      .single();
+
+    if (!settings?.push_token) return;
+
+    await supabase.functions.invoke("send-push-notification", {
+      body: { token: settings.push_token, title, body, data },
+    });
+  } catch (e) {
+    console.log("sendPushToSelf error:", e.message);
+  }
+};
 export const cancelAppointmentReminder = async (appointmentId) => {
   const scheduled = await Notifications.getAllScheduledNotificationsAsync();
   for (const notif of scheduled) {
@@ -166,6 +188,7 @@ export const notifyNewClient = async (clientName) => {
   await Promise.all([
     sendLocalNotification({ ...n, data: { type: n.type } }),
     saveNotificationToDB(n),
+    sendPushToSelf(n.title, n.body, { type: n.type }),
   ]);
 };
 
@@ -178,6 +201,7 @@ export const notifyClientLeft = async (clientName) => {
   await Promise.all([
     sendLocalNotification({ ...n, data: { type: n.type } }),
     saveNotificationToDB(n),
+    sendPushToSelf(n.title, n.body, { type: n.type }),
   ]);
 };
 
@@ -190,6 +214,7 @@ export const notifyProgramEnding = async (clientName, daysLeft) => {
   await Promise.all([
     sendLocalNotification({ ...n, data: { type: n.type } }),
     saveNotificationToDB(n),
+    sendPushToSelf(n.title, n.body, { type: n.type }),
   ]);
 };
 
@@ -202,9 +227,9 @@ export const notifyProgramExpired = async (clientName) => {
   await Promise.all([
     sendLocalNotification({ ...n, data: { type: n.type } }),
     saveNotificationToDB(n),
+    sendPushToSelf(n.title, n.body, { type: n.type }),
   ]);
 };
-
 // ─── PROGRAM BİTİŞ KONTROLÜ (uygulama açıldığında çalıştır) ─────────────────
 
 export const checkProgramExpirations = async (settings) => {
