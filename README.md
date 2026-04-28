@@ -72,57 +72,6 @@ Diyetisyen, hazır diyet programını PDF olarak yükler. Claude AI PDF'i analiz
 ### Alışveriş Listesi
 Haftalık program öğünleri Claude AI'ya gönderilir. AI malzemeleri kategorilere ayırarak (Et & Balık, Sebze & Meyve, Tahıl vs.) PDF alışveriş listesi oluşturur.
 
----
-
-## 📲 Kurulum
-
-```bash
-# Bağımlılıkları yükle
-npm install
-
-# Android için çalıştır
-npx expo run:android
-
-# iOS için çalıştır
-npx expo run:ios
-```
-
-### Gerekli Servisler
-- [Supabase](https://supabase.com) — Veritabanı ve auth
-- [Anthropic](https://anthropic.com) — Claude API
-- [Firebase](https://firebase.google.com) — Push bildirimler
-- [Resend](https://resend.com) — Email servisi
-
-### Environment Variables
-Supabase URL ve API key'i `supabase.js` dosyasına ekleyin:
-```js
-const supabaseUrl = "YOUR_SUPABASE_URL";
-const supabaseAnonKey = "YOUR_SUPABASE_ANON_KEY";
-```
-
----
-
-## 📁 Proje Yapısı
-
-```
-src/
-├── navigation/        — Stack ve tab navigasyon
-├── pages/
-│   ├── Client/        — Danışan sayfaları
-│   └── Dietitian/     — Diyetisyen sayfaları
-├── components/        — Ortak bileşenler
-├── services/          — Bildirim servisi
-└── utils/             — PDF oluşturma yardımcıları
-
-supabase/
-└── functions/         — Edge Functions
-    ├── parse-diet-pdf        — PDF analizi
-    ├── analyze-meals         — Alışveriş listesi
-    ├── send-push-notification — Push bildirim
-    └── send-invite-email     — Davet emaili
-```
-
----
 
 ## 🔔 Bildirim Senaryoları
 
@@ -151,8 +100,14 @@ Bu proje özel kullanım içindir.
 
 ---
 
+---
+
+## 📋 Kurulum Gereksinimleri
+
+Detaylı kurulum talimatları için [REQUIREMENTS.md](./REQUIREMENTS.md) dosyasına bakın.
+
+---
+
 <p align="center">
   <strong>Diyet Life</strong> — Sağlıklı yaşam, dijital takip
-  <br/>
-  <a href="https://diyetlife.com.tr">diyetlife.com.tr</a>
 </p>
