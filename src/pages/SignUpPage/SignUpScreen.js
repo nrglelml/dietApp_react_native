@@ -218,8 +218,7 @@ const SignUpScreen = () => {
         {/* Görseldeki "Smart Kitchen Tip" Kutusu */}
         <View style={styles.tipBox}>
           <Text style={styles.tipText}>
-            🔔 **Smart Kitchen Tip:** Hazırlık süresinden 30 dk önce bildirim
-            alacaksınız!
+            🔔 ** Tip: ** Bildirim Ayarlarını Kendinize Göre Ayarlayabilirsiniz!
           </Text>
         </View>
 

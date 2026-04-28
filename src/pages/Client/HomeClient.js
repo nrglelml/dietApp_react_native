@@ -30,7 +30,7 @@ const toLocalDateStr = (date = new Date()) => {
 };
 const todayStr = toLocalDateStr();
 
-const DAYS_TR = ["Pzt", "Sal", "Çar", "Per", "Cum", "Cmt", "Paz"];
+const DAYS_TR = ["Paz", "Pzt", "Sal", "Çar", "Per", "Cum", "Cmt"];
 const MONTHS_TR = [
   "Ocak",
   "Şubat",
@@ -161,6 +161,7 @@ const HomeClient = () => {
   const [latestMeasurement, setLatestMeasurement] = useState(null);
   const [generatingPDF, setGeneratingPDF] = useState(false);
   const [pdfStatus, setPdfStatus] = useState("");
+  const [recommendations, setRecommendations] = useState("");
 
   useEffect(() => {
     loadAll();
@@ -216,6 +217,24 @@ const HomeClient = () => {
       if (profile) {
         setClientName(profile.full_name || "");
         setClientData(profile);
+      }
+      // Diyetisyen önerilerini çek
+      const { data: clientProfDyt } = await supabase
+        .from("client_profiles")
+        .select("dietitian_id")
+        .eq("id", user.id)
+        .single();
+
+      if (clientProfDyt?.dietitian_id) {
+        const { data: dytSettings } = await supabase
+          .from("dietitian_settings")
+          .select("recommendations")
+          .eq("dietitian_id", clientProfDyt.dietitian_id)
+          .single();
+
+        if (dytSettings?.recommendations) {
+          setRecommendations(dytSettings.recommendations);
+        }
       }
 
       // Aktif program
@@ -632,6 +651,23 @@ const HomeClient = () => {
             </View>
           </View>
         )}
+        {recommendations ? (
+          <View style={styles.card}>
+            <View style={styles.cardHeader}>
+              <Text style={styles.cardTitle}>💡 Diyetisyen Önerileri</Text>
+            </View>
+            <Text
+              style={{
+                fontSize: 14,
+                color: "#3A3A3C",
+                lineHeight: 22,
+                paddingTop: 4,
+              }}
+            >
+              {recommendations}
+            </Text>
+          </View>
+        ) : null}
 
         {/* AKTİF PROGRAM */}
         {activeProgram && (

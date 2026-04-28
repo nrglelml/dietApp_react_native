@@ -16,7 +16,7 @@ const WelcomeScreen = () => {
       </View>
 
       <View style={styles.textViewStyle}>
-        <Text style={styles.textStyle}>DİYET UYGULAMASINA HOŞGELDİNİZ</Text>
+        <Text style={styles.textStyle}>DİYET LİFE UYGULAMASINA HOŞGELDİNİZ</Text>
       </View>
 
       <View style={styles.buttonViewStyle}>

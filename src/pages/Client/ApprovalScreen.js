@@ -77,6 +77,7 @@ const ApprovalScreen = ({ route }) => {
           .update({
             dietitian_id: dietitianId,
             status: "active",
+            joined_at: new Date().toISOString(),
           })
           .eq("id", user.id);
 

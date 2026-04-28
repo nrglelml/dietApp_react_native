@@ -226,12 +226,12 @@ const Recipes = () => {
       const arrayBuffer = await new Response(blob).arrayBuffer();
 
       const { error } = await supabase.storage
-        .from("recipe-images")
+        .from("recipe_images")
         .upload(fileName, arrayBuffer, { contentType: `image/${ext}` });
       if (error) throw error;
 
       const { data: urlData } = supabase.storage
-        .from("recipe-images")
+        .from("recipe_images")
         .getPublicUrl(fileName);
       return urlData.publicUrl;
     } catch (e) {

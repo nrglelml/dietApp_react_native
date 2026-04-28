@@ -23,13 +23,13 @@ import * as ImagePicker from "expo-image-picker";
 import { ClientTabBar } from "../../components";
 
 const DAYS_TR = [
+  "Pazar",
   "Pazartesi",
   "Salı",
   "Çarşamba",
   "Perşembe",
   "Cuma",
   "Cumartesi",
-  "Pazar",
 ];
 const MONTHS_TR = [
   "Ocak",

@@ -22,18 +22,19 @@ import { supabase } from "../../../supabase";
 
 const TABS = ["Profil", "Program", "Öğünler", "Geçmiş"];
 
-const DAY_SHORTS = ["Pzt", "Sal", "Çar", "Per", "Cum", "Cmt", "Paz"];
+const DAY_SHORTS = ["Pzr", "Pzt", "Sal", "Çar", "Per", "Cum", "Cmt"];
 const getDayShort = (dateStr) =>
   DAY_SHORTS[new Date(dateStr + "T12:00:00").getDay()];
 const getDayFullName = (dateStr) => {
   const days = [
+    "Pazar",
     "Pazartesi",
     "Salı",
     "Çarşamba",
     "Perşembe",
     "Cuma",
     "Cumartesi",
-    "Pazar",
+
   ];
   return days[new Date(dateStr + "T12:00:00").getDay()];
 };

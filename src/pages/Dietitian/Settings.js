@@ -82,6 +82,7 @@ const Settings = () => {
     work_days: [1, 2, 3, 4, 5],
     work_start: "09:00",
     work_end: "18:00",
+    recommendations: "",
   });
 
   // Reminder seçici modal
@@ -138,6 +139,7 @@ const Settings = () => {
           work_days: s.work_days ?? [1, 2, 3, 4, 5],
           work_start: s.work_start ?? "09:00",
           work_end: s.work_end ?? "18:00",
+          recommendations: s.recommendations || "",
         });
       }
     } catch (e) {
@@ -501,7 +503,27 @@ const Settings = () => {
             </TouchableOpacity>
           )}
         </View>
-
+        {/* ── ÖNERİLER ─────────────────────────────────────────────────── */}
+        <SectionHeader title="Danışan Önerileri" />
+        <View style={styles.card}>
+          <Text style={[styles.subLabel, { paddingBottom: 4 }]}>
+            Tüm danışanlarınızın ana sayfasında görünecek
+          </Text>
+          <TextInput
+            style={styles.recommendationsInput}
+            placeholder="Öğünlerinizi belirtilen saatlerde tüketin...&#10;Günde en az 2.5 Lt su için...&#10;Tuz tüketimini sınırlandırın..."
+            value={settings.recommendations}
+            onChangeText={(v) =>
+              setSettings((s) => ({ ...s, recommendations: v }))
+            }
+            onBlur={() =>
+              saveSettings({ recommendations: settings.recommendations })
+            }
+            multiline
+            numberOfLines={8}
+            textAlignVertical="top"
+          />
+        </View>
         {/* ── ÇALIŞMA SAATLERİ ─────────────────────────────────────────── */}
         <SectionHeader title="Çalışma Saatleri" />
         <View style={styles.card}>
@@ -957,6 +979,16 @@ const styles = StyleSheet.create({
     borderBottomColor: "#F2F2F7",
   },
   reminderOptionText: { fontSize: 15, color: "#1C1C1E" },
+  recommendationsInput: {
+    margin: 12,
+    backgroundColor: "#F2F2F7",
+    borderRadius: 12,
+    padding: 14,
+    fontSize: 14,
+    color: "#1C1C1E",
+    minHeight: 180,
+    lineHeight: 22,
+  },
 });
 
 export default Settings;

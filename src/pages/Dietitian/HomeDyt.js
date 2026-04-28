@@ -114,6 +114,7 @@ const HomeDyt = () => {
   const [notifications, setNotifications] = useState([]);
   const [loadingNotifs, setLoadingNotifs] = useState(false);
   const [dismissedWarnings, setDismissedWarnings] = useState(new Set());
+  const [dietitianAvatar, setDietitianAvatar] = useState(null);
 
   const navigation = useNavigation();
   const route = useRoute();
@@ -208,10 +209,13 @@ const HomeDyt = () => {
       setDietitianId(user.id);
       const { data: profile } = await supabase
         .from("dietitian_profiles")
-        .select("full_name")
+        .select("full_name,avatar_url")
         .eq("id", user.id)
         .single();
-      if (profile) setDietitianName(profile.full_name);
+     if (profile) {
+      setDietitianName(profile.full_name);
+      setDietitianAvatar(profile.avatar_url); 
+    }
       // ── DİYETİSYEN PUSH TOKEN KAYDET ──────────────────────
       try {
         const Notifications = require("expo-notifications");
@@ -251,7 +255,7 @@ const HomeDyt = () => {
     const { data, error } = await supabase
       .from("client_profiles")
       .select(
-        "id, full_name, weight, height, status, email, created_at,avatar_url",
+        "id, full_name, weight, height, status, email, created_at,avatar_url,joined_at",
       )
       .eq("dietitian_id", dytId)
       .eq("status", "active")
@@ -264,7 +268,9 @@ const HomeDyt = () => {
     weekAgo.setDate(weekAgo.getDate() - 7);
     setStats({
       totalClients: data.length,
-      thisWeek: data.filter((c) => new Date(c.created_at) > weekAgo).length,
+      thisWeek: data.filter((c) => 
+  c.joined_at && new Date(c.joined_at) > weekAgo
+).length,
     });
 
     if (data.length > 0) {
@@ -505,15 +511,24 @@ const HomeDyt = () => {
       <View style={styles.header}>
         <View style={styles.headerTop}>
           <View style={styles.profileRow}>
-            <View style={styles.adminAvatar}>
-              <Ionicons name="person" size={18} color="#8E8E93" />
-            </View>
-            <View>
-              <Text style={styles.welcomeText}>Merhaba,</Text>
-              <Text style={styles.portalTitle}>
-                {dietitianName || "Diyetisyen"}
-              </Text>
-            </View>
+             {dietitianAvatar ? (
+    <Image
+      source={{ uri: dietitianAvatar }}
+      style={styles.avatarImage}
+    />
+  ) : (
+    <View style={styles.avatarPlaceholder}>
+      <Text style={styles.avatarLetter}>
+        {(dietitianName || "D").charAt(0).toUpperCase()}
+      </Text>
+    </View>
+  )}
+  <View style={styles.welcomeInfo}>
+    <Text style={styles.welcomeText}>Hoş geldin,</Text>
+    <Text style={styles.portalTitle} numberOfLines={1}>
+      {dietitianName || "Diyetisyen"}
+    </Text>
+  </View>
           </View>
           <View style={{ flexDirection: "row", gap: 8 }}>
             <TouchableOpacity
