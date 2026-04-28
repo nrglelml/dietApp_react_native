@@ -266,21 +266,52 @@ npx expo install \
   react-native-calendars
 ```
 
----
-
-## ⚠️ Önemli Notlar
-
-- Push bildirimler **gerçek cihazda** test edilmeli, emülatörde çalışmaz
-- Firebase `google-services.json` dosyasını `.gitignore`'a ekle
-- Supabase URL ve key'leri asla commit etme
-- `android/app/google-services.json` dosyasını `.gitignore`'a ekle
-
----
 
 ## 🔐 .gitignore'a Eklenmesi Gerekenler
 
 ```
-android/app/google-services.json
-supabase.js
-.env
+# Learn more https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files
+
+# dependencies
+node_modules/
+
+# Expo
+.expo/
+dist/
+web-build/
+expo-env.d.ts
+
+# Native
+.kotlin/
+*.orig.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+
+# Metro
+.metro-health-check*
+
+# debug
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# macOS
+.DS_Store
+*.pem
+
+# local env files
+.env*.local
+
+# typescript
+*.tsbuildinfo
+
+# generated native folders
+/ios
+/android
+
+google-services.json
+
 ```
